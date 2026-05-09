@@ -23,6 +23,6 @@ idf_component_register(
 
 idf_build_get_property(pm_project_ver PROJECT_VER)
 if("${pm_project_ver}" STREQUAL "")
-    set(pm_project_ver "1.0.0")
+    set(pm_project_ver "0.0.0-unknown")
 endif()
 target_compile_definitions(${COMPONENT_LIB} PRIVATE PM_FW_VERSION="${pm_project_ver}")

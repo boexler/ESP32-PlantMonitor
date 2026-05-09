@@ -28,7 +28,7 @@ typedef struct {
 } mqtt_wait_t;
 
 #ifndef PM_FW_VERSION
-#define PM_FW_VERSION "1.0.0"
+#define PM_FW_VERSION "0.0.0-unknown"
 #endif
 
 #define MQTT_CONNECT_TIMEOUT_MS 20000

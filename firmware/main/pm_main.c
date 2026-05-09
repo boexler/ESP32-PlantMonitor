@@ -150,7 +150,8 @@ static void mac_to_compact_id(const uint8_t mac[6], char out_compact[13])
 }
 
 /**
- * @brief Warn once at boot if soil ADC reference ordering is inconsistent (mapping needs disconnect < water < air).
+ * @brief Warn once at boot if soil ADC reference ordering is inconsistent (disconnect < water < moist < dry < air <
+ *        spike).
  */
 static void warn_if_soil_calib_order_invalid(void)
 {
@@ -159,15 +160,17 @@ static void warn_if_soil_calib_order_invalid(void)
     int moist = CONFIG_PM_SOIL_ADC_ILEX_VERY_WET;
     int dryp = CONFIG_PM_SOIL_ADC_VERY_DRY;
     int a = CONFIG_PM_SOIL_ADC_AIR;
-    if (!(dc < w && w < moist && moist < dryp && dryp < a)) {
+    int sp = CONFIG_PM_SOIL_ADC_SPIKE_MIN;
+    if (!(dc < w && w < moist && moist < dryp && dryp < a && a < sp)) {
         ESP_LOGW(TAG,
-                 "Soil ADC Kconfig ordering should be: disconnect < water < moist_plant < dry_plant < air "
-                 "(got %d, %d, %d, %d, %d)",
+                 "Soil ADC Kconfig ordering should be: disconnect < water < moist_plant < dry_plant < air < spike "
+                 "(got %d, %d, %d, %d, %d, %d)",
                  dc,
                  w,
                  moist,
                  dryp,
-                 a);
+                 a,
+                 sp);
     }
     if (w >= a) {
         ESP_LOGW(TAG, "Soil ADC: water reference must be less than air reference (got water=%d air=%d)", w, a);
@@ -175,13 +178,16 @@ static void warn_if_soil_calib_order_invalid(void)
 }
 
 /**
- * @brief Map averaged raw ADC to moisture 0–100%, or -1 if no sensor (open / disconnected).
+ * @brief Map averaged raw ADC to moisture 0–100%, or -1 if no sensor (disconnected or spike).
  *
  * Uses water and air references from sdkconfig; clamps to [0, 100] when connected.
  */
 static float raw_to_moisture_pct(int raw)
 {
     if (raw < CONFIG_PM_SOIL_ADC_DISCONNECT_MAX) {
+        return -1.f;
+    }
+    if (raw > CONFIG_PM_SOIL_ADC_SPIKE_MIN) {
         return -1.f;
     }
     const int air = CONFIG_PM_SOIL_ADC_AIR;
@@ -215,7 +221,11 @@ static esp_err_t measure_channels(pm_station_config_t *cfg, float moisture_out[P
     for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
         moisture_out[i] = raw_to_moisture_pct(raw[i]);
         if (moisture_out[i] < 0.f) {
-            ESP_LOGW(TAG, "CH%d: no sensor / disconnected (raw=%d)", i, raw[i]);
+            if (raw[i] > CONFIG_PM_SOIL_ADC_SPIKE_MIN) {
+                ESP_LOGW(TAG, "CH%d: no sensor / spike (raw=%d)", i, raw[i]);
+            } else {
+                ESP_LOGW(TAG, "CH%d: no sensor / disconnected (raw=%d)", i, raw[i]);
+            }
         } else {
             ESP_LOGI(TAG, "CH%d raw=%d moisture=%.1f%%", i, raw[i], (double)moisture_out[i]);
         }

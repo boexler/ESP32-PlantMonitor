@@ -1,0 +1,29 @@
+# ESP-IDF build; full git history for git describe / tags; tag builds export PM_PROJECT_VER (see firmware/CMakeLists.txt).
+name: Firmware
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  pull_request:
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: release-v5.5
+          target: esp32c6
+          path: firmware
+          command: export PM_PROJECT_VER=${{ github.ref_type == 'tag' && github.ref_name || '' }} && idf.py build

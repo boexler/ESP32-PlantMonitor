@@ -115,7 +115,7 @@ menu "Plant Monitor (ESP32-C6)"
 
     config PM_SOIL_ADC_DISCONNECT_MAX
         int "Soil ADC: no-sensor threshold (raw strictly below = disconnected)"
-        default 1000
+        default 1300
         range 0 4095
         help
             No Sensor / Sensor disconnected.
@@ -123,7 +123,7 @@ menu "Plant Monitor (ESP32-C6)"
 
     config PM_SOIL_ADC_WATER
         int "Soil ADC: reference raw for in water (100% moisture)"
-        default 1900
+        default 2000
         range 0 4095
         help
             Reference: "in Water" (100%).
@@ -131,7 +131,7 @@ menu "Plant Monitor (ESP32-C6)"
 
     config PM_SOIL_ADC_ILEX_VERY_WET
         int "Soil ADC: reference raw for a very moist plant (documentation / tuning)"
-        default 2185
+        default 2300
         range 0 4095
         help
             Reference: A very moist plant.
@@ -139,7 +139,7 @@ menu "Plant Monitor (ESP32-C6)"
 
     config PM_SOIL_ADC_VERY_DRY
         int "Soil ADC: reference raw for a very dry plant (documentation / tuning)"
-        default 2550
+        default 2500
         range 0 4095
         help
             Reference: A very dry plant.
@@ -147,10 +147,17 @@ menu "Plant Monitor (ESP32-C6)"
 
     config PM_SOIL_ADC_AIR
         int "Soil ADC: reference raw for air (0% moisture)"
-        default 2650
+        default 2600
         range 0 4095
         help
             Reference: Air (0 %).
             Lower end of the linear map: 0% moisture at this raw (higher raw = drier). Must be greater than the water reference.
+
+    config PM_SOIL_ADC_SPIKE_MIN
+        int "Soil ADC: no-sensor above this raw (strictly greater; spikes / invalid)"
+        default 3000
+        range 0 4095
+        help
+            Averaged raw ADC greater than this value is treated as no probe / invalid (e.g. EMI spikes); moisture is -1 like a disconnected channel.
 
 endmenu

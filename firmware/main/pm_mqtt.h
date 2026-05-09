@@ -26,8 +26,8 @@ typedef struct {
  * Intended for deep-sleep wake cycles: minimal broker footprint between sleeps.
  *
  * @param mac_topic_id Lowercase MAC without colons (e.g. "aabbccddeeff").
- * @param moisture_pct Per channel: moisture 0–100 when a probe is connected, or -1 when disconnected
- *                    (raw below PM_SOIL_ADC_DISCONNECT_MAX); ignored if channel inactive.
+ * @param moisture_pct Per channel: moisture 0–100 when a probe is connected, or -1 when disconnected or invalid
+ *                    (raw below PM_SOIL_ADC_DISCONNECT_MAX or above PM_SOIL_ADC_SPIKE_MIN); ignored if channel inactive.
  */
 esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
                                const pm_mqtt_discovery_input_t *disc,
