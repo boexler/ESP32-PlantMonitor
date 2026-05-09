@@ -15,5 +15,39 @@
       "bad_mac": "MAC must resolve to exactly 12 hexadecimal characters.",
       "mqtt_not_connected": "MQTT is not connected. Configure the MQTT integration first."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Moisture zones",
+        "description": "Adjust the shared 0–100% bands for all soil channels plus an optional HA persistent toast when moisture drops below each channel threshold.",
+        "data": {
+          "notify_dry_persistent": "Show persistent Home Assistant notifications for dry alarms",
+          "zone_0_min": "Band 1 min %",
+          "zone_0_max": "Band 1 max %",
+          "zone_0_label": "Band 1 label",
+          "zone_0_color": "Band 1 color hint",
+          "zone_1_min": "Band 2 min %",
+          "zone_1_max": "Band 2 max %",
+          "zone_1_label": "Band 2 label",
+          "zone_1_color": "Band 2 color hint",
+          "zone_2_min": "Band 3 min %",
+          "zone_2_max": "Band 3 max %",
+          "zone_2_label": "Band 3 label",
+          "zone_2_color": "Band 3 color hint",
+          "zone_3_min": "Band 4 min %",
+          "zone_3_max": "Band 4 max %",
+          "zone_3_label": "Band 4 label",
+          "zone_3_color": "Band 4 color hint",
+          "zone_4_min": "Band 5 min %",
+          "zone_4_max": "Band 5 max %",
+          "zone_4_label": "Band 5 label",
+          "zone_4_color": "Band 5 color hint"
+        }
+      }
+    },
+    "error": {
+      "invalid_zones": "Bands must rise in ascending order with min lower than max, every label non-empty."
+    }
   }
 }
