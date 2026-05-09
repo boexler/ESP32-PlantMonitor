@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_check.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "esp_sleep.h"
 #include "esp_mac.h"
@@ -27,6 +28,71 @@
 #include "pm_mqtt.h"
 
 static const char TAG[] = "plant_monitor";
+
+/**
+ * @brief Log how the chip last exited reset (power-on, RST pin, deep sleep wake, etc.).
+ */
+static void log_reset_reason(void)
+{
+    esp_reset_reason_t r = esp_reset_reason();
+    const char *name;
+
+    switch (r) {
+    case ESP_RST_UNKNOWN:
+        name = "UNKNOWN";
+        break;
+    case ESP_RST_POWERON:
+        name = "POWERON";
+        break;
+    case ESP_RST_EXT:
+        name = "EXT (RST button / reset pin)";
+        break;
+    case ESP_RST_SW:
+        name = "SW (esp_restart)";
+        break;
+    case ESP_RST_PANIC:
+        name = "PANIC";
+        break;
+    case ESP_RST_INT_WDT:
+        name = "INT_WDT";
+        break;
+    case ESP_RST_TASK_WDT:
+        name = "TASK_WDT";
+        break;
+    case ESP_RST_WDT:
+        name = "WDT";
+        break;
+    case ESP_RST_DEEPSLEEP:
+        name = "DEEPSLEEP";
+        break;
+    case ESP_RST_BROWNOUT:
+        name = "BROWNOUT";
+        break;
+    case ESP_RST_SDIO:
+        name = "SDIO";
+        break;
+    case ESP_RST_USB:
+        name = "USB";
+        break;
+    case ESP_RST_JTAG:
+        name = "JTAG";
+        break;
+    case ESP_RST_EFUSE:
+        name = "EFUSE";
+        break;
+    case ESP_RST_PWR_GLITCH:
+        name = "PWR_GLITCH";
+        break;
+    case ESP_RST_CPU_LOCKUP:
+        name = "CPU_LOCKUP";
+        break;
+    default:
+        name = "OTHER";
+        break;
+    }
+
+    ESP_LOGI(TAG, "Reset reason: %s (%d)", name, (int)r);
+}
 
 static void sync_time_via_sntp(void)
 {
@@ -83,18 +149,54 @@ static void mac_to_compact_id(const uint8_t mac[6], char out_compact[13])
              mac[5]);
 }
 
-/** Map raw averaged ADC to approximate moisture index (invert common resistive probes). */
-static float raw_to_moisture_pct(int raw12)
+/**
+ * @brief Warn once at boot if soil ADC reference ordering is inconsistent (mapping needs disconnect < water < air).
+ */
+static void warn_if_soil_calib_order_invalid(void)
 {
-    const float vmax = (float)((1 << 12) - 1);
-    float r = (float)raw12;
-    if (r < 0.f) {
-        r = 0.f;
+    int dc = CONFIG_PM_SOIL_ADC_DISCONNECT_MAX;
+    int w = CONFIG_PM_SOIL_ADC_WATER;
+    int moist = CONFIG_PM_SOIL_ADC_ILEX_VERY_WET;
+    int dryp = CONFIG_PM_SOIL_ADC_VERY_DRY;
+    int a = CONFIG_PM_SOIL_ADC_AIR;
+    if (!(dc < w && w < moist && moist < dryp && dryp < a)) {
+        ESP_LOGW(TAG,
+                 "Soil ADC Kconfig ordering should be: disconnect < water < moist_plant < dry_plant < air "
+                 "(got %d, %d, %d, %d, %d)",
+                 dc,
+                 w,
+                 moist,
+                 dryp,
+                 a);
     }
-    if (r > vmax) {
-        r = vmax;
+    if (w >= a) {
+        ESP_LOGW(TAG, "Soil ADC: water reference must be less than air reference (got water=%d air=%d)", w, a);
     }
-    return 100.f - (100.f * r / vmax);
+}
+
+/**
+ * @brief Map averaged raw ADC to moisture 0–100%, or -1 if no sensor (open / disconnected).
+ *
+ * Uses water and air references from sdkconfig; clamps to [0, 100] when connected.
+ */
+static float raw_to_moisture_pct(int raw)
+{
+    if (raw < CONFIG_PM_SOIL_ADC_DISCONNECT_MAX) {
+        return -1.f;
+    }
+    const int air = CONFIG_PM_SOIL_ADC_AIR;
+    const int water = CONFIG_PM_SOIL_ADC_WATER;
+    const int span = air - water;
+    if (span <= 0) {
+        return -1.f;
+    }
+    float pct = 100.f * (float)(air - raw) / (float)span;
+    if (pct < 0.f) {
+        pct = 0.f;
+    } else if (pct > 100.f) {
+        pct = 100.f;
+    }
+    return pct;
 }
 
 /**
@@ -112,7 +214,11 @@ static esp_err_t measure_channels(pm_station_config_t *cfg, float moisture_out[P
 
     for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
         moisture_out[i] = raw_to_moisture_pct(raw[i]);
-        ESP_LOGI(TAG, "CH%d raw=%d approx_moisture=%.1f%%", i, raw[i], (double)moisture_out[i]);
+        if (moisture_out[i] < 0.f) {
+            ESP_LOGW(TAG, "CH%d: no sensor / disconnected (raw=%d)", i, raw[i]);
+        } else {
+            ESP_LOGI(TAG, "CH%d raw=%d moisture=%.1f%%", i, raw[i], (double)moisture_out[i]);
+        }
     }
     return ESP_OK;
 }
@@ -154,6 +260,7 @@ static uint32_t mqtt_backoff_deep_sleep_ms(int attempt_index_0_based)
 void app_main(void)
 {
     printf("ESP32-C6 plant monitor (MQTT / Home Assistant discovery)\n");
+    log_reset_reason();
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -175,6 +282,8 @@ void app_main(void)
     char compact[13];
     mac_to_compact_id(mac, compact);
     ESP_LOGI(TAG, "WiFi STA MAC compact id %s", compact);
+
+    warn_if_soil_calib_order_invalid();
 
     ESP_ERROR_CHECK(pm_adc_init());
 
