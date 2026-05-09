@@ -1,3 +1,6 @@
 /build/
 /sdkconfig
 /sdkconfig.old
+
+# IDF Component Manager download cache (recreated by CMake)
+/managed_components/

@@ -15,7 +15,7 @@ idf_component_register(
         esp_wifi
         esp_http_client
         mqtt
-        json
+        cjson
         nvs_flash
         lwip
 )
