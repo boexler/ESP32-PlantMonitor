@@ -6,6 +6,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "driver/gpio.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -37,7 +38,41 @@ static EventGroupHandle_t s_wifi_event_group;
 
 static const char TAG[] = "pm_wifi";
 
+/** RF switch (FM8625H): GPIO3 enable low, GPIO14 high selects U.FL per Seeed wiki. */
+#define PM_XIAO_C6_ANT_GPIO_ENABLE GPIO_NUM_3
+#define PM_XIAO_C6_ANT_GPIO_SELECT GPIO_NUM_14
+
 static int s_retry_num = 0;
+
+/**
+ * @brief Drive Seeed XIAO ESP32-C6 antenna switch from menuconfig (external U.FL vs internal PCB).
+ *
+ * Must run after esp_wifi_init() and before esp_wifi_start(). Levels match Seeed Wi-Fi usage wiki.
+ */
+static void apply_xiao_c6_antenna_from_config(void)
+{
+#if CONFIG_PM_WIFI_ANT_EXTERNAL
+    gpio_reset_pin(PM_XIAO_C6_ANT_GPIO_ENABLE);
+    gpio_reset_pin(PM_XIAO_C6_ANT_GPIO_SELECT);
+    gpio_set_direction(PM_XIAO_C6_ANT_GPIO_ENABLE, GPIO_MODE_OUTPUT);
+    gpio_set_direction(PM_XIAO_C6_ANT_GPIO_SELECT, GPIO_MODE_OUTPUT);
+    gpio_set_level(PM_XIAO_C6_ANT_GPIO_ENABLE, 0);
+    gpio_set_level(PM_XIAO_C6_ANT_GPIO_SELECT, 1);
+    ESP_LOGI(TAG, "Wi-Fi antenna: external (U.FL), GPIO%d=0 GPIO%d=1",
+             (int)PM_XIAO_C6_ANT_GPIO_ENABLE,
+             (int)PM_XIAO_C6_ANT_GPIO_SELECT);
+#elif CONFIG_PM_WIFI_ANT_INTERNAL
+    gpio_reset_pin(PM_XIAO_C6_ANT_GPIO_ENABLE);
+    gpio_reset_pin(PM_XIAO_C6_ANT_GPIO_SELECT);
+    gpio_set_direction(PM_XIAO_C6_ANT_GPIO_ENABLE, GPIO_MODE_INPUT);
+    gpio_set_direction(PM_XIAO_C6_ANT_GPIO_SELECT, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(PM_XIAO_C6_ANT_GPIO_ENABLE, GPIO_FLOATING);
+    gpio_set_pull_mode(PM_XIAO_C6_ANT_GPIO_SELECT, GPIO_FLOATING);
+    ESP_LOGI(TAG, "Wi-Fi antenna: internal (PCB), GPIO%d/GPIO%d floating input",
+             (int)PM_XIAO_C6_ANT_GPIO_ENABLE,
+             (int)PM_XIAO_C6_ANT_GPIO_SELECT);
+#endif
+}
 
 static void wifi_event_handler(void *arg,
                                esp_event_base_t event_base,
@@ -74,6 +109,8 @@ static esp_err_t wifi_init_sta_once(void)
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    apply_xiao_c6_antenna_from_config();
 
     esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;

@@ -16,7 +16,7 @@ Firmware maps **software indices 0…5 → GPIO0,1,2,4,5,6**.
 ### Notes
 
 - **JTAG pads** GPIO4–6 double as ADC and debug; avoid holding them in incompatible states during measurement.
-- **RF switch pins** GPIO3/GPIO14 are unrelated to moisture channels — keep firmware defaults unless you reroute antennas.
+- **RF switch pins** GPIO3/GPIO14 control the onboard FM8625H (external U.FL vs internal ceramic). They are unrelated to moisture channels. In firmware, choose **Plant Monitor → Wi-Fi antenna (XIAO ESP32-C6)** in `idf.py menuconfig`; **default is external (U.FL)**. Internal mode sets both pins to high-impedance inputs per Seeed’s guidance.
 - **Moisture %** publish is derived from inverted raw ADC (higher ADC often means dryer soil for resistive dividers); calibrate in Home Assistant helpers if needed.
 - **Attenuation** uses IDF maximum span (`ADC_ATTEN_DB_12`) so mixed probe wiring still fits inside the SAR range — adjust attenuation/bit width only if probes rail.
 - **Sampling** averages `CONFIG_PM_ADC_SAMPLE_COUNT` reads per wake.

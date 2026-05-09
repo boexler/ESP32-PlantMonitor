@@ -28,9 +28,6 @@
 
 static const char TAG[] = "plant_monitor";
 
-/** Retries for one-shot MQTT cycle before giving up (deep sleep still follows). */
-#define PM_MQTT_ONESHOT_RETRY_MAX 3
-
 static void sync_time_via_sntp(void)
 {
     ESP_LOGI(TAG, "Timezone TZ=%s", CONFIG_ESP_NTP_TZ);
@@ -126,6 +123,11 @@ static void fill_mqtt_disc(pm_mqtt_discovery_input_t *disc, pm_station_config_t 
     memcpy(disc->channel_active, cfg->channel_active, sizeof(disc->channel_active));
 }
 
+#if CONFIG_PM_POWER_DEEP_SLEEP
+
+/** Retries for one-shot MQTT cycle before giving up (deep sleep still follows). */
+#define PM_MQTT_ONESHOT_RETRY_MAX 3
+
 /**
  * @brief One shot: measure + @ref pm_mqtt_publish_cycle for deep sleep mode.
  */
@@ -146,6 +148,8 @@ static uint32_t mqtt_backoff_deep_sleep_ms(int attempt_index_0_based)
     const uint32_t cap = 16000u;
     return (ms > cap) ? cap : ms;
 }
+
+#endif /* deep sleep helpers */
 
 void app_main(void)
 {

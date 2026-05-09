@@ -9,6 +9,9 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # Default: deep sleep mode (explicit for fresh clones before menuconfig)
 CONFIG_PM_POWER_DEEP_SLEEP=y
 
+# Default: external U.FL antenna (XIAO ESP32-C6 RF switch)
+CONFIG_PM_WIFI_ANT_EXTERNAL=y
+
 # HTTPS device registry URLs (ESP_CONFIG_URL): mbedTLS requires a verification method
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y

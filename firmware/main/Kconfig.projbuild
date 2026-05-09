@@ -54,6 +54,21 @@ menu "Plant Monitor (ESP32-C6)"
         int "Maximum WiFi connection retries"
         default 5
 
+    choice PM_WIFI_ANTENNA
+        prompt "Wi-Fi antenna (XIAO ESP32-C6)"
+        default PM_WIFI_ANT_EXTERNAL
+        help
+            Seeed XIAO ESP32-C6 routes RF through an FM8625H switch controlled by GPIO3 (enable)
+            and GPIO14 (path select). See docs/hardware_xiao_esp32c6.md.
+
+        config PM_WIFI_ANT_EXTERNAL
+            bool "External (U.FL)"
+
+        config PM_WIFI_ANT_INTERNAL
+            bool "Internal (PCB ceramic)"
+
+    endchoice
+
     config ESP_CONFIG_URL
         string "Device registry JSON URL"
         default "http://homeassistant.local/local/plant_monitor_devices.json"
