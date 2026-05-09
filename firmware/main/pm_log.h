@@ -13,6 +13,8 @@ typedef struct {
 #define xBufferSizeBytes 2048
 #define xItemSize 768
 
+extern char wifiIpAddress[16];
+
 int logging_vprintf(const char *fmt, va_list l);
 esp_err_t udp_logging_init(char *ipaddr, unsigned long port, int16_t enableStdout);
 void init_logging(void);

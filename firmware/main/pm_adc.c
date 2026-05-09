@@ -4,6 +4,7 @@
  */
 
 #include <string.h>
+#include "esp_check.h"
 #include "esp_log.h"
 #include "esp_adc/adc_oneshot.h"
 #include "driver/gpio.h"
@@ -37,8 +38,8 @@ esp_err_t pm_adc_init(void)
     ESP_RETURN_ON_ERROR(adc_oneshot_new_unit(&init, &s_adc), TAG, "new adc unit");
 
     for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
-        int ch = -1;
-        int u = -1;
+        adc_channel_t ch;
+        adc_unit_t u;
         esp_err_t ig = adc_oneshot_io_to_channel((int)s_adc_gpios[i], &u, &ch);
         if (ig != ESP_OK) {
             ESP_LOGE(TAG, "GPIO %d is not an ADC pin", s_adc_gpios[i]);
@@ -47,9 +48,9 @@ esp_err_t pm_adc_init(void)
             return ig;
         }
         if (u != ADC_UNIT_1) {
-            ESP_LOGW(TAG, "Unexpected ADC unit %d for GPIO %d", u, s_adc_gpios[i]);
+            ESP_LOGW(TAG, "Unexpected ADC unit %d for GPIO %d", (int)u, s_adc_gpios[i]);
         }
-        s_ch[i] = (adc_channel_t)ch;
+        s_ch[i] = ch;
 
         adc_oneshot_chan_cfg_t chan_cfg = {
             .bitwidth = ADC_BITWIDTH_DEFAULT,

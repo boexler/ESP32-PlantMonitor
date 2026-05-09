@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "cJSON.h"
 
 #include "pm_config.h"
@@ -44,6 +45,12 @@ static esp_err_t http_event(esp_http_client_event_t *evt)
         break;
     }
     return ESP_OK;
+}
+
+/** True if @p url uses HTTPS (needs TLS verification options for mbedTLS). */
+static bool url_is_https(const char *url)
+{
+    return url != NULL && strncmp(url, "https://", 8) == 0;
 }
 
 static void mac_to_string(const uint8_t mac[6], char *out18)
@@ -158,6 +165,11 @@ esp_err_t pm_config_load_from_url(const char *config_url, pm_station_config_t *o
         .event_handler = http_event,
         .timeout_ms = 15000,
     };
+
+    /* ESP-IDF 6 mbedTLS rejects HTTPS without crt bundle, PEM cert, or explicit skip-verify. */
+    if (url_is_https(config_url)) {
+        http_cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    }
 
     esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
     if (client == NULL) {

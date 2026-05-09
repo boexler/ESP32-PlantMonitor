@@ -47,7 +47,7 @@ The serial log prints the **compact Wi-Fi MAC** used when adding the Home Assist
 ### Firmware build troubleshooting
 
 - **`fullclean` / `set-target` refuses** (“doesn't seem to be a CMake build directory”): delete **`firmware/build` manually**, then run `idf.py set-target esp32c6` again.
-- **Wrong chip in the log** (`esp32` vs `esp32c6`, or wrong compiler triplet): you ran `menuconfig` / `build` **before** `idf.py set-target esp32c6`, or `sdkconfig` is stale — delete `build`, run `set-target`, rebuild.
+- **Wrong chip in the log** (`esp32` vs `esp32c6`, wrong compiler triplet like `xtensa-esp32-elf` instead of **riscv32** for C6): your `sdkconfig` still targets the wrong SoC — delete **`firmware/build`** **and** (if unsure) **`firmware/sdkconfig`**, then run **`idf.py set-target esp32c6`** and build again.
 
 ## Home Assistant
 

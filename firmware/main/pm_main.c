@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_check.h"
 #include "nvs_flash.h"
 #include "esp_sleep.h"
 #include "esp_mac.h"
@@ -102,7 +103,10 @@ static float raw_to_moisture_pct(int raw12)
 static esp_err_t measure_and_mqtt_publish(const char *compact, pm_station_config_t *cfg)
 {
     int raw[PM_MOISTURE_CHANNEL_COUNT];
-    ESP_RETURN_ON_ERROR(pm_adc_read_averaged(CONFIG_PM_ADC_SAMPLE_COUNT, raw));
+    ESP_RETURN_ON_ERROR(
+        pm_adc_read_averaged(CONFIG_PM_ADC_SAMPLE_COUNT, raw),
+        TAG,
+        "pm_adc_read_averaged failed");
 
     float moisture[PM_MOISTURE_CHANNEL_COUNT];
     for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
