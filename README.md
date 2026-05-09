@@ -14,7 +14,11 @@ ESP-IDF firmware for Seeed Studio **XIAO ESP32-C6** plus a **Home Assistant MQTT
 1. Install [ESP-IDF](https://docs.espressif.com/projects/esp-idf/) (5.x) with `esp32c6` support.
 2. `cd firmware`
 3. `idf.py set-target esp32c6`
-4. `idf.py menuconfig` — set Wi-Fi, MQTT broker URI, and device registry URL (for example `http://homeassistant.local/local/plant_monitor_devices.json`).
+4. `idf.py menuconfig`
+   - **Plant Monitor (ESP32-C6)** → **Power / sleep behaviour**:
+     - **Deep sleep between measurements** (default): wakes on the interval configured as *Deep sleep duration (seconds)*, then sleeps again — best for battery operation.
+     - **Continuous (debug, no deep sleep)**: runs a loop measuring and publishing over MQTT without deep sleep — best for debugging over USB serial (nothing is prompted during `idf.py flash`; you choose here before building).
+   - Configure Wi-Fi, MQTT broker URI, and device registry URL (for example `http://homeassistant.local/local/plant_monitor_devices.json`).
 5. `idf.py -p PORT flash monitor`
 
 The serial log prints the **compact Wi-Fi MAC** used when adding the custom integration.

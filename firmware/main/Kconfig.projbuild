@@ -1,5 +1,34 @@
 menu "Plant Monitor (ESP32-C6)"
 
+    choice PM_POWER_MODE
+        prompt "Power / sleep behaviour"
+        default PM_POWER_DEEP_SLEEP
+        help
+            Choose deep sleep between measurement cycles (battery/low power),
+            or continuous operation (easier debugging over USB serial: no sleep).
+
+        config PM_POWER_DEEP_SLEEP
+            bool "Deep sleep between measurements"
+
+        config PM_POWER_CONTINUOUS_DEBUG
+            bool "Continuous (debug, no deep sleep)"
+
+    endchoice
+
+    config PM_MEASURE_INTERVAL_SEC
+        int "Deep sleep duration (seconds)"
+        depends on PM_POWER_DEEP_SLEEP
+        default 3600
+        help
+            Time spent in deep sleep after each measurement cycle before the next wake.
+
+    config PM_DEBUG_LOOP_PERIOD_MS
+        int "Continuous mode delay between cycles (milliseconds)"
+        depends on PM_POWER_CONTINUOUS_DEBUG
+        default 5000
+        help
+            Idle delay between repeated measure + MQTT publishes when continuous (debug) mode is selected.
+
     config ESP_WIFI_SSID
         string "WiFi SSID"
         default "myssid"
@@ -64,12 +93,6 @@ menu "Plant Monitor (ESP32-C6)"
     config PM_HA_DISCOVERY_PREFIX
         string "Home Assistant MQTT discovery prefix"
         default "homeassistant"
-
-    config PM_MEASURE_INTERVAL_SEC
-        int "Deep sleep interval (seconds)"
-        default 3600
-        help
-            Time between measurement cycles before entering deep sleep again.
 
     config PM_ADC_SAMPLE_COUNT
         int "Samples per channel (averaged)"
