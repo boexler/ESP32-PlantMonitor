@@ -49,5 +49,16 @@
     "error": {
       "invalid_zones": "Ungültige Zonen: min < max, steigende Reihenfolge, alle Textfelder müssen gefüllt sein."
     }
+  },
+  "entity": {
+    "sensor": {
+      "soil_probe": {
+        "state": {
+          "unknown": "Warte auf Messung",
+          "no_sensor": "Kein Sensor angeschlossen",
+          "ok": "Messung aktiv"
+        }
+      }
+    }
   }
 }

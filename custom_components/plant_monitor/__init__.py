@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -26,6 +27,8 @@ from .const import (
     DOMAIN,
     EVENT_SOIL_MOISTURE_LOW,
     PLATFORMS,
+    PROBE_NO_SENSOR,
+    PROBE_OK,
     coerce_moisture_zones,
     default_moisture_zones,
     dispatcher_signal_update,
@@ -47,6 +50,7 @@ class PlantRuntime:
     topic_prefix: str
     mac: str
     moisture: dict[int, float] = field(default_factory=dict)
+    probe_status: dict[int, str] = field(default_factory=dict)
     channel_active: list[bool] = field(default_factory=lambda: [True] * 6)
     mqtt_unsubs: list[Callable[[], Any]] = field(default_factory=list)
 
@@ -106,6 +110,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                 runtime.channel_active = [bool(x) for x in active[:6]]
 
+                for idx in range(6):
+
+                    if not runtime.channel_active[idx]:
+
+                        runtime.moisture.pop(idx, None)
+
+                        runtime.probe_status.pop(idx, None)
+
         except (json.JSONDecodeError, TypeError, ValueError):
 
             _LOGGER.warning("Invalid JSON on %s", msg.topic)
@@ -129,6 +141,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             return
 
+        if ch < 0 or ch >= 6:
+
+            return
+
+        if ch < len(runtime.channel_active) and not runtime.channel_active[ch]:
+
+            return
+
         try:
 
             val = float(msg.payload)
@@ -137,7 +157,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             return
 
-        runtime.moisture[ch] = val
+        if not math.isfinite(val) or val < 0.0:
+
+            runtime.moisture.pop(ch, None)
+
+            runtime.probe_status[ch] = PROBE_NO_SENSOR
+
+        elif val > 100.0:
+
+            runtime.moisture[ch] = 100.0
+
+            runtime.probe_status[ch] = PROBE_OK
+
+        else:
+
+            runtime.moisture[ch] = val
+
+            runtime.probe_status[ch] = PROBE_OK
 
         runtime.dispatch_refresh()
 

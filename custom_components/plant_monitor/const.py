@@ -20,6 +20,11 @@ CONF_OPT_CHANNEL_NAMES = "channel_names"
 
 EVENT_SOIL_MOISTURE_LOW = "plant_monitor_soil_low"
 
+# Firmware publishes -1.0 when no capacitive probe is connected.
+PROBE_UNKNOWN = "unknown"
+PROBE_NO_SENSOR = "no_sensor"
+PROBE_OK = "ok"
+
 DEFAULT_DRY_THRESHOLD = 35.0
 
 # Global moisture zones: half-open [min,max) except the last row, which includes max (100%).

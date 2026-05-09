@@ -49,5 +49,16 @@
     "error": {
       "invalid_zones": "Bands must rise in ascending order with min lower than max, every label non-empty."
     }
+  },
+  "entity": {
+    "sensor": {
+      "soil_probe": {
+        "state": {
+          "unknown": "Awaiting measurement",
+          "no_sensor": "No sensor connected",
+          "ok": "Measuring"
+        }
+      }
+    }
   }
 }

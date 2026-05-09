@@ -25,11 +25,13 @@ After pairing the device entry:
 
 | Entity type | Purpose |
 |-------------|---------|
-| MQTT **`sensor`** (discovered) | Raw soil moisture **`%`** (best for gauges and templates). Index `m0` … `m5` in discovery aligns with **`moisture/ch0` … `/ch5`**. |
+| MQTT **`sensor`** (discovered) | Raw soil moisture **`%`** as published (including firmware **`-1`**). You can hide duplicates in favor of integration sensors. |
+| `sensor.*_moisture_pct_*` | **Companion %** from the same MQTT stream: **unavailable** unless a valid 0–100 reading was received (negative firmware values are treated as *no sensor*). |
+| `sensor.*_soil_probe_*` | **Enum** (`unknown` / `no_sensor` / `ok`): `no_sensor` when the payload is **&lt; 0** or non-finite (typically **-1** = no capacitive probe connected). |
 | `sensor.*_moisture_zone_*` | Text state equals the matched band label (`sehr trocken`, `optimal`, …). Attributes include `moisture_percent`, `color_hint`, and `placement_name`. |
 | `text.*_channel_caption_*` | Per-channel captions you edit directly in HA; they populate `placement_name` and the qualitative sensor title when set. |
 | `number.*_dry_threshold_*` | Config threshold per channel. |
-| `binary_sensor.*_dry` | Goes **on** when moisture `%` `<` channel threshold (`PROBLEM`). |
+| `binary_sensor.*_dry` | Goes **on** when moisture `%` `<` channel threshold (`PROBLEM`) — only meaningful when a valid % is cached. |
 
 Global band edges default to **half-open `[min,max)`** ranges for the first four bands and **includes 100 % on the top band**. Adjust under *Plant monitor integration → Configure*.
 
@@ -76,11 +78,11 @@ action:
 
 ### Lovelace gauge (needle card)
 
-Pick the discovered MQTT moisture sensor (`sensor.plant_monitor_…`), then match severity bands with your Configure table:
+Use **`sensor.<device>_moisture_pct_X`** from this integration so the gauge skips invalid readings (or hide the MQTT entity if `-1` is confusing):
 
 ```yaml
 type: gauge
-entity: sensor.PLANT_REPLACE_m0   # MQTT-discovered `%` soil sensor (index = channel)
+entity: sensor.PLANT_REPLACE_moisture_pct_0
 min: 0
 max: 100
 needle: true
@@ -122,7 +124,7 @@ Prefer **MQTT state**, **integrations**, and **`notify` services**. Do not write
 | `{prefix}/{mac}/availability` | QoS 1 retain | `online`/`offline` (LWT) |
 | `{prefix}/{mac}/meta/channels` | retain | JSON `{"active":[bool×6]}` |
 | `{prefix}/{mac}/meta/device` | retain | JSON `{"name":"…"}` |
-| `{prefix}/{mac}/moisture/ch{N}` (`N`=`0…5`) | no retain | Soil moisture **`%`** ASCII float |
+| `{prefix}/{mac}/moisture/ch{N}` (`N`=`0…5`) | no retain | Soil moisture **`%`** ASCII float (**`-1`** when no capacitive probe is connected — use integration **`_soil_probe_`** / **`_moisture_pct_`** for UI). |
 | `homeassistant/sensor/{prefix}_{mac}_m{N}/config` | retain | MQTT discovery JSON |
 
 ## Troubleshooting
@@ -131,3 +133,4 @@ Prefer **MQTT state**, **integrations**, and **`notify` services**. Do not write
 - **Integration cannot be added** — finish HA MQTT broker configuration first (`mqtt.is_connected`).
 - **No MQTT entities** — ensure discovery is enabled on the MQTT integration and the broker retained messages are permitted.
 - **No dry event** — thresholds must be crossed (`binary_sensor … dry` rises to `on`); captions are optional helpers only.
+- **MQTT `%` echoes −1** — MQTT discovery forwards raw payloads; **`_moisture_pct_`** entities stay unavailable and **`_soil_probe_`** reports `no_sensor` (localized, e.g. German *Kein Sensor angeschlossen*).
