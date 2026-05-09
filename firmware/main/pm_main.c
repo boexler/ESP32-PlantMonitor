@@ -28,6 +28,9 @@
 
 static const char TAG[] = "plant_monitor";
 
+/** Retries for one-shot MQTT cycle before giving up (deep sleep still follows). */
+#define PM_MQTT_ONESHOT_RETRY_MAX 3
+
 static void sync_time_via_sntp(void)
 {
     ESP_LOGI(TAG, "Timezone TZ=%s", CONFIG_ESP_NTP_TZ);
@@ -98,28 +101,50 @@ static float raw_to_moisture_pct(int raw12)
 }
 
 /**
- * @brief Single measurement + MQTT discovery/state publish cycle.
+ * @brief Sample ADC and fill moisture array; log each channel.
  */
-static esp_err_t measure_and_mqtt_publish(const char *compact, pm_station_config_t *cfg)
+static esp_err_t measure_channels(pm_station_config_t *cfg, float moisture_out[PM_MOISTURE_CHANNEL_COUNT])
 {
+    (void)cfg;
     int raw[PM_MOISTURE_CHANNEL_COUNT];
-    ESP_RETURN_ON_ERROR(
-        pm_adc_read_averaged(CONFIG_PM_ADC_SAMPLE_COUNT, raw),
-        TAG,
-        "pm_adc_read_averaged failed");
-
-    float moisture[PM_MOISTURE_CHANNEL_COUNT];
-    for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
-        moisture[i] = raw_to_moisture_pct(raw[i]);
-        ESP_LOGI(TAG, "CH%d raw=%d approx_moisture=%.1f%%", i, raw[i], (double)moisture[i]);
+    esp_err_t err = pm_adc_read_averaged(CONFIG_PM_ADC_SAMPLE_COUNT, raw);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "pm_adc_read_averaged failed: %s", esp_err_to_name(err));
+        return err;
     }
 
-    pm_mqtt_discovery_input_t disc = {
-        .human_device_name = cfg->device_name,
-    };
-    memcpy(disc.channel_active, cfg->channel_active, sizeof(disc.channel_active));
+    for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
+        moisture_out[i] = raw_to_moisture_pct(raw[i]);
+        ESP_LOGI(TAG, "CH%d raw=%d approx_moisture=%.1f%%", i, raw[i], (double)moisture_out[i]);
+    }
+    return ESP_OK;
+}
 
+static void fill_mqtt_disc(pm_mqtt_discovery_input_t *disc, pm_station_config_t *cfg)
+{
+    disc->human_device_name = cfg->device_name;
+    memcpy(disc->channel_active, cfg->channel_active, sizeof(disc->channel_active));
+}
+
+/**
+ * @brief One shot: measure + @ref pm_mqtt_publish_cycle for deep sleep mode.
+ */
+static esp_err_t measure_and_mqtt_publish_oneshot(const char *compact, pm_station_config_t *cfg)
+{
+    float moisture[PM_MOISTURE_CHANNEL_COUNT];
+    ESP_RETURN_ON_ERROR(measure_channels(cfg, moisture), TAG, "measure_channels failed");
+
+    pm_mqtt_discovery_input_t disc;
+    fill_mqtt_disc(&disc, cfg);
     return pm_mqtt_publish_cycle(compact, &disc, moisture);
+}
+
+/** Exponential backoff for deep-sleep MQTT retries: 2 s, 4 s, 8 s (capped). */
+static uint32_t mqtt_backoff_deep_sleep_ms(int attempt_index_0_based)
+{
+    uint32_t ms = 2000u << (unsigned)attempt_index_0_based;
+    const uint32_t cap = 16000u;
+    return (ms > cap) ? cap : ms;
 }
 
 void app_main(void)
@@ -151,7 +176,25 @@ void app_main(void)
 
 #if CONFIG_PM_POWER_DEEP_SLEEP
     ESP_LOGI(TAG, "Power mode: deep sleep (interval %" PRIu32 " s)", (uint32_t)CONFIG_PM_MEASURE_INTERVAL_SEC);
-    ESP_ERROR_CHECK(measure_and_mqtt_publish(compact, &cfg));
+
+    esp_err_t mqtt_err = ESP_OK;
+    for (int attempt = 0; attempt < PM_MQTT_ONESHOT_RETRY_MAX; attempt++) {
+        mqtt_err = measure_and_mqtt_publish_oneshot(compact, &cfg);
+        if (mqtt_err == ESP_OK) {
+            break;
+        }
+        ESP_LOGW(TAG,
+                 "measure/MQTT cycle failed (%s), attempt %d/%d",
+                 esp_err_to_name(mqtt_err),
+                 attempt + 1,
+                 PM_MQTT_ONESHOT_RETRY_MAX);
+        if (attempt + 1 < PM_MQTT_ONESHOT_RETRY_MAX) {
+            vTaskDelay(pdMS_TO_TICKS(mqtt_backoff_deep_sleep_ms(attempt)));
+        }
+    }
+    if (mqtt_err != ESP_OK) {
+        ESP_LOGW(TAG, "MQTT publish failed after retries; entering deep sleep anyway");
+    }
 
     pm_adc_deinit();
     pm_station_config_release(&cfg);
@@ -163,8 +206,41 @@ void app_main(void)
     ESP_LOGI(TAG,
              "Power mode: continuous debug (delay %" PRIu32 " ms between cycles)",
              (uint32_t)CONFIG_PM_DEBUG_LOOP_PERIOD_MS);
+
+    pm_mqtt_discovery_input_t disc;
+    fill_mqtt_disc(&disc, &cfg);
+
+    uint32_t start_backoff_ms = 1000;
+    for (;;) {
+        esp_err_t se = pm_mqtt_session_start(compact, &disc);
+        if (se == ESP_OK) {
+            break;
+        }
+        ESP_LOGE(TAG,
+                 "pm_mqtt_session_start failed: %s, retry in %" PRIu32 " ms",
+                 esp_err_to_name(se),
+                 start_backoff_ms);
+        vTaskDelay(pdMS_TO_TICKS(start_backoff_ms));
+        if (start_backoff_ms < 16000) {
+            start_backoff_ms *= 2;
+        }
+    }
+
     while (1) {
-        ESP_ERROR_CHECK(measure_and_mqtt_publish(compact, &cfg));
+        float moisture[PM_MOISTURE_CHANNEL_COUNT];
+        esp_err_t me = measure_channels(&cfg, moisture);
+        if (me != ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(CONFIG_PM_DEBUG_LOOP_PERIOD_MS));
+            continue;
+        }
+
+        fill_mqtt_disc(&disc, &cfg);
+        esp_err_t pe = pm_mqtt_session_publish_moisture(&disc, moisture);
+        if (pe != ESP_OK) {
+            ESP_LOGW(TAG, "pm_mqtt_session_publish_moisture failed: %s", esp_err_to_name(pe));
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+
         vTaskDelay(pdMS_TO_TICKS(CONFIG_PM_DEBUG_LOOP_PERIOD_MS));
     }
 #endif

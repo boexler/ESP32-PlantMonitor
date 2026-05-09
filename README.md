@@ -44,6 +44,15 @@ ESP-IDF firmware for Seeed Studio **XIAO ESP32-C6** plus a **Home Assistant MQTT
 
 The serial log prints the **compact Wi-Fi MAC** used when adding the Home Assistant integration.
 
+### MQTT connect drops (firmware vs. infrastructure)
+
+Firmware retries MQTT and (in continuous debug mode) keeps a single session open to reduce connect/TLS churn. **If the broker still closes the TCP connection during handshake** (serial log e.g. `mqtt_message_receive() returned 0`), treat that as an **infrastructure** issue as well:
+
+1. Inspect **Mosquitto / Home Assistant MQTT broker logs** at the same time as the device (disconnect reason, auth, limits).
+2. Check **client limits**, listener caps, and **ACLs** if the broker rejects half-open or rapid sessions.
+3. For **`mqtts://`**, verify **TLS/time** on the device (SNTP) and broker certificate expectations.
+4. Review **Wi‑Fi** signal and stability (weak links often show up as sporadic TLS or TCP failures).
+
 ### Firmware build troubleshooting
 
 - **`fullclean` / `set-target` refuses** (“doesn't seem to be a CMake build directory”): delete **`firmware/build` manually**, then run `idf.py set-target esp32c6` again.

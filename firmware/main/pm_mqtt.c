@@ -1,6 +1,6 @@
 /**
  * @file pm_mqtt.c
- * @brief One-shot MQTT publish: Home Assistant discovery, metadata, moisture states.
+ * @brief MQTT: one-shot publish cycle (deep sleep) or persistent session (continuous debug).
  */
 
 #include <stdio.h>
@@ -20,19 +20,28 @@ static const char TAG[] = "pm_mqtt";
 #define MQTT_EV_CONNECTED BIT0
 #define MQTT_EV_FAILED BIT1
 
+/** Context shared by the MQTT event handler and connection wait logic. */
 typedef struct {
     EventGroupHandle_t eg;
     esp_mqtt_client_handle_t client;
+    volatile bool broker_connected;
 } mqtt_wait_t;
 
 #ifndef PM_FW_VERSION
 #define PM_FW_VERSION "1.0.0"
 #endif
 
-static void mqtt_event(void *handler_args,
-                       esp_event_base_t base,
-                       int32_t event_id,
-                       void *event_data)
+#define MQTT_CONNECT_TIMEOUT_MS 20000
+
+/** Single active session for continuous debug mode (file scope). */
+static mqtt_wait_t s_sess = {0};
+static char s_mac_topic[13];
+static bool s_sess_started = false;
+
+static void mqtt_event_handler(void *handler_args,
+                               esp_event_base_t base,
+                               int32_t event_id,
+                               void *event_data)
 {
     mqtt_wait_t *ctx = (mqtt_wait_t *)handler_args;
     (void)base;
@@ -41,10 +50,16 @@ static void mqtt_event(void *handler_args,
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT connected");
+        ctx->broker_connected = true;
         xEventGroupSetBits(ctx->eg, MQTT_EV_CONNECTED);
+        break;
+    case MQTT_EVENT_DISCONNECTED:
+        ESP_LOGW(TAG, "MQTT disconnected");
+        ctx->broker_connected = false;
         break;
     case MQTT_EVENT_ERROR:
         ESP_LOGE(TAG, "MQTT error");
+        ctx->broker_connected = false;
         xEventGroupSetBits(ctx->eg, MQTT_EV_FAILED);
         break;
     default:
@@ -152,19 +167,28 @@ static esp_err_t build_discovery_json(char *out,
     return ESP_OK;
 }
 
-esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
-                                const pm_mqtt_discovery_input_t *disc,
-                                const float moisture_pct[PM_MOISTURE_CHANNEL_COUNT])
+/**
+ * @brief Block until MQTT connect succeeds, fails, or times out.
+ */
+static esp_err_t wait_for_mqtt_connected(mqtt_wait_t *w, uint32_t timeout_ms)
 {
-    if (mac_topic_id == NULL || disc == NULL || moisture_pct == NULL) {
-        return ESP_ERR_INVALID_ARG;
+    EventBits_t bits = xEventGroupWaitBits(w->eg,
+                                           MQTT_EV_CONNECTED | MQTT_EV_FAILED,
+                                           pdTRUE,
+                                           pdFALSE,
+                                           pdMS_TO_TICKS(timeout_ms));
+    if ((bits & MQTT_EV_CONNECTED) == 0) {
+        ESP_LOGE(TAG, "MQTT connect timeout or failure");
+        return ESP_ERR_TIMEOUT;
     }
+    return ESP_OK;
+}
 
-    mqtt_wait_t wait = {.eg = xEventGroupCreate(), .client = NULL};
-    if (wait.eg == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
-
+/**
+ * @brief Create broker config, init client, register events, and start transport.
+ */
+static esp_err_t mqtt_client_create_and_start(mqtt_wait_t *w, const char *mac_topic_id)
+{
     char lwt_topic[192];
     topic_suffix(lwt_topic, sizeof(lwt_topic), mac_topic_id, "availability");
 
@@ -183,33 +207,28 @@ esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
 
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mq);
     if (!client) {
-        vEventGroupDelete(wait.eg);
         return ESP_ERR_NO_MEM;
     }
-    wait.client = client;
+    w->client = client;
+    w->broker_connected = false;
 
-    esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event, &wait);
+    esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event_handler, w);
     esp_err_t st = esp_mqtt_client_start(client);
     if (st != ESP_OK) {
         esp_mqtt_client_destroy(client);
-        vEventGroupDelete(wait.eg);
+        w->client = NULL;
         return st;
     }
+    return ESP_OK;
+}
 
-    EventBits_t bits = xEventGroupWaitBits(wait.eg,
-                                           MQTT_EV_CONNECTED | MQTT_EV_FAILED,
-                                           pdTRUE,
-                                           pdFALSE,
-                                           pdMS_TO_TICKS(20000));
-
-    if ((bits & MQTT_EV_CONNECTED) == 0) {
-        ESP_LOGE(TAG, "MQTT connect timeout or failure");
-        esp_mqtt_client_stop(client);
-        esp_mqtt_client_destroy(client);
-        vEventGroupDelete(wait.eg);
-        return ESP_ERR_TIMEOUT;
-    }
-
+/**
+ * @brief Publish availability, channel meta, device meta, and HA discovery messages.
+ */
+static esp_err_t publish_bootstrap(esp_mqtt_client_handle_t client,
+                                   const char *mac_topic_id,
+                                   const pm_mqtt_discovery_input_t *disc)
+{
     esp_err_t err = ESP_OK;
     char base[144];
     topic_base(base, sizeof(base), mac_topic_id);
@@ -222,7 +241,7 @@ esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
         snprintf(t, sizeof(t), "%s/availability", base);
         err = publish_retained(client, t, "online");
         if (err != ESP_OK) {
-            goto cleanup;
+            return err;
         }
     }
 
@@ -236,15 +255,14 @@ esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
         char *printed = cJSON_PrintUnformatted(mj);
         cJSON_Delete(mj);
         if (printed == NULL) {
-            err = ESP_ERR_NO_MEM;
-            goto cleanup;
+            return ESP_ERR_NO_MEM;
         }
         char path[176];
         snprintf(path, sizeof(path), "%s/meta/channels", base);
         err = publish_retained(client, path, printed);
         free(printed);
         if (err != ESP_OK) {
-            goto cleanup;
+            return err;
         }
     }
 
@@ -255,15 +273,14 @@ esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
         char *printed = cJSON_PrintUnformatted(dj);
         cJSON_Delete(dj);
         if (printed == NULL) {
-            err = ESP_ERR_NO_MEM;
-            goto cleanup;
+            return ESP_ERR_NO_MEM;
         }
         char path[176];
         snprintf(path, sizeof(path), "%s/meta/device", base);
         err = publish_retained(client, path, printed);
         free(printed);
         if (err != ESP_OK) {
-            goto cleanup;
+            return err;
         }
     }
 
@@ -281,7 +298,7 @@ esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
                                    attr_topic_meta);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "discovery ch%d: %s", ch, esp_err_to_name(err));
-            goto cleanup;
+            return err;
         }
         snprintf(disc_topic,
                  sizeof(disc_topic),
@@ -292,29 +309,189 @@ esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
                  ch);
         err = publish_retained(client, disc_topic, disc_line);
         if (err != ESP_OK) {
-            goto cleanup;
+            return err;
         }
     }
 
-    {
-        char val[32];
-        char topic[192];
-        for (int ch = 0; ch < PM_MOISTURE_CHANNEL_COUNT; ch++) {
-            if (!disc->channel_active[ch]) {
-                continue;
-            }
-            snprintf(topic, sizeof(topic), "%s/moisture/ch%d", base, ch);
-            snprintf(val, sizeof(val), "%.1f", (double)moisture_pct[ch]);
-            err = publish_state(client, topic, val);
-            if (err != ESP_OK) {
-                goto cleanup;
-            }
+    return ESP_OK;
+}
+
+/**
+ * @brief Publish non-retained moisture values for active channels only.
+ */
+static esp_err_t publish_moisture_states(esp_mqtt_client_handle_t client,
+                                         const char *mac_topic_id,
+                                         const pm_mqtt_discovery_input_t *disc,
+                                         const float moisture_pct[PM_MOISTURE_CHANNEL_COUNT])
+{
+    char base[144];
+    topic_base(base, sizeof(base), mac_topic_id);
+
+    char val[32];
+    char topic[192];
+    esp_err_t err = ESP_OK;
+
+    for (int ch = 0; ch < PM_MOISTURE_CHANNEL_COUNT; ch++) {
+        if (!disc->channel_active[ch]) {
+            continue;
+        }
+        snprintf(topic, sizeof(topic), "%s/moisture/ch%d", base, ch);
+        snprintf(val, sizeof(val), "%.1f", (double)moisture_pct[ch]);
+        err = publish_state(client, topic, val);
+        if (err != ESP_OK) {
+            return err;
         }
     }
+    return ESP_OK;
+}
 
-cleanup:
-    esp_mqtt_client_stop(client);
-    esp_mqtt_client_destroy(client);
+/**
+ * @brief Tear down transport for the persistent session only.
+ */
+static void session_destroy_transport(void)
+{
+    if (s_sess.client != NULL) {
+        esp_mqtt_client_stop(s_sess.client);
+        esp_mqtt_client_destroy(s_sess.client);
+        s_sess.client = NULL;
+    }
+    s_sess.broker_connected = false;
+}
+
+/**
+ * @brief Full reconnect: new TCP/TLS session and bootstrap retained topics.
+ */
+static esp_err_t session_full_reconnect(const pm_mqtt_discovery_input_t *disc)
+{
+    session_destroy_transport();
+
+    esp_err_t e = mqtt_client_create_and_start(&s_sess, s_mac_topic);
+    if (e != ESP_OK) {
+        return e;
+    }
+    e = wait_for_mqtt_connected(&s_sess, MQTT_CONNECT_TIMEOUT_MS);
+    if (e != ESP_OK) {
+        session_destroy_transport();
+        return e;
+    }
+    return publish_bootstrap(s_sess.client, s_mac_topic, disc);
+}
+
+esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
+                                const pm_mqtt_discovery_input_t *disc,
+                                const float moisture_pct[PM_MOISTURE_CHANNEL_COUNT])
+{
+    if (mac_topic_id == NULL || disc == NULL || moisture_pct == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    mqtt_wait_t wait = {.eg = xEventGroupCreate(), .client = NULL, .broker_connected = false};
+    if (wait.eg == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t err = mqtt_client_create_and_start(&wait, mac_topic_id);
+    if (err != ESP_OK) {
+        vEventGroupDelete(wait.eg);
+        return err;
+    }
+
+    err = wait_for_mqtt_connected(&wait, MQTT_CONNECT_TIMEOUT_MS);
+    if (err != ESP_OK) {
+        esp_mqtt_client_stop(wait.client);
+        esp_mqtt_client_destroy(wait.client);
+        vEventGroupDelete(wait.eg);
+        return err;
+    }
+
+    err = publish_bootstrap(wait.client, mac_topic_id, disc);
+    if (err == ESP_OK) {
+        err = publish_moisture_states(wait.client, mac_topic_id, disc, moisture_pct);
+    }
+
+    esp_mqtt_client_stop(wait.client);
+    esp_mqtt_client_destroy(wait.client);
     vEventGroupDelete(wait.eg);
     return err;
+}
+
+esp_err_t pm_mqtt_session_start(const char *mac_topic_id, const pm_mqtt_discovery_input_t *disc)
+{
+    if (mac_topic_id == NULL || disc == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    pm_mqtt_session_stop();
+
+    s_sess.eg = xEventGroupCreate();
+    if (s_sess.eg == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    strncpy(s_mac_topic, mac_topic_id, sizeof(s_mac_topic) - 1);
+    s_mac_topic[sizeof(s_mac_topic) - 1] = '\0';
+
+    esp_err_t err = mqtt_client_create_and_start(&s_sess, s_mac_topic);
+    if (err != ESP_OK) {
+        vEventGroupDelete(s_sess.eg);
+        s_sess.eg = NULL;
+        return err;
+    }
+
+    err = wait_for_mqtt_connected(&s_sess, MQTT_CONNECT_TIMEOUT_MS);
+    if (err != ESP_OK) {
+        session_destroy_transport();
+        vEventGroupDelete(s_sess.eg);
+        s_sess.eg = NULL;
+        return err;
+    }
+
+    err = publish_bootstrap(s_sess.client, s_mac_topic, disc);
+    if (err != ESP_OK) {
+        session_destroy_transport();
+        vEventGroupDelete(s_sess.eg);
+        s_sess.eg = NULL;
+        return err;
+    }
+
+    s_sess_started = true;
+    return ESP_OK;
+}
+
+esp_err_t pm_mqtt_session_publish_moisture(const pm_mqtt_discovery_input_t *disc,
+                                          const float moisture_pct[PM_MOISTURE_CHANNEL_COUNT])
+{
+    if (!s_sess_started || disc == NULL || moisture_pct == NULL || s_sess.client == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!s_sess.broker_connected) {
+        ESP_LOGW(TAG, "session: reconnecting (not connected)");
+        esp_err_t err = session_full_reconnect(disc);
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    esp_err_t err = publish_moisture_states(s_sess.client, s_mac_topic, disc, moisture_pct);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "publish moisture failed, attempting reconnect");
+        err = session_full_reconnect(disc);
+        if (err != ESP_OK) {
+            return err;
+        }
+        err = publish_moisture_states(s_sess.client, s_mac_topic, disc, moisture_pct);
+    }
+    return err;
+}
+
+void pm_mqtt_session_stop(void)
+{
+    session_destroy_transport();
+    if (s_sess.eg != NULL) {
+        vEventGroupDelete(s_sess.eg);
+        s_sess.eg = NULL;
+    }
+    s_sess_started = false;
+    s_mac_topic[0] = '\0';
 }
