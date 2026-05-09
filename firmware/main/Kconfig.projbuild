@@ -1,0 +1,78 @@
+menu "Plant Monitor (ESP32-C6)"
+
+    config ESP_WIFI_SSID
+        string "WiFi SSID"
+        default "myssid"
+
+    config ESP_WIFI_PASSWORD
+        string "WiFi Password"
+        default "mypassword"
+
+    choice ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD
+        prompt "WiFi Scan auth mode threshold"
+        default ESP_WIFI_AUTH_WPA2_PSK
+        config ESP_WIFI_AUTH_OPEN
+            bool "OPEN"
+        config ESP_WIFI_AUTH_WPA2_PSK
+            bool "WPA2 PSK"
+        config ESP_WIFI_AUTH_WPA3_PSK
+            bool "WPA3 PSK"
+        config ESP_WIFI_AUTH_WPA2_WPA3_PSK
+            bool "WPA2/WPA3 PSK"
+    endchoice
+
+    config ESP_MAXIMUM_RETRY
+        int "Maximum WiFi connection retries"
+        default 5
+
+    config ESP_CONFIG_URL
+        string "Device registry JSON URL"
+        default "http://homeassistant.local/local/plant_monitor_devices.json"
+        help
+            HTTPS/HTTP URL returning JSON (see docs). Maps station MAC to name and per-channel active flags.
+
+    config ESP_NTP_TZ
+        string "POSIX timezone (TZ)"
+        default "CET-1CEST,M3.5.0,M10.5.0/3"
+
+    config ESP_NTP_SERVER
+        string "NTP server"
+        default "pool.ntp.org"
+
+    config ESP_SYSLOG_SERVER
+        string "Syslog server (UDP, empty to disable)"
+        default ""
+
+    config PM_MQTT_BROKER_URI
+        string "MQTT broker URI"
+        default "mqtt://192.168.1.10:1883"
+        help
+            Example: mqtt://user:pass@host:1883 or mqtts://...
+
+    config PM_MQTT_USERNAME
+        string "MQTT username (optional)"
+        default ""
+
+    config PM_MQTT_PASSWORD
+        string "MQTT password (optional)"
+        default ""
+
+    config PM_MQTT_TOPIC_PREFIX
+        string "MQTT topic prefix"
+        default "plant_monitor"
+
+    config PM_HA_DISCOVERY_PREFIX
+        string "Home Assistant MQTT discovery prefix"
+        default "homeassistant"
+
+    config PM_MEASURE_INTERVAL_SEC
+        int "Deep sleep interval (seconds)"
+        default 3600
+        help
+            Time between measurement cycles before entering deep sleep again.
+
+    config PM_ADC_SAMPLE_COUNT
+        int "Samples per channel (averaged)"
+        default 8
+
+endmenu

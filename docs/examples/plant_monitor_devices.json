@@ -1,0 +1,7 @@
+[
+  {
+    "mac": "aa:bb:cc:dd:ee:ff",
+    "name": "Example bench node",
+    "channels": [true, true, true, false, false, false]
+  }
+]

@@ -1,0 +1,5 @@
+{
+  "name": "Plant Monitor (ESP32 MQTT)",
+  "render_readme": true,
+  "homeassistant": "2024.1.0"
+}

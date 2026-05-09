@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Plant monitor (MQTT)",
+        "description": "Enter the same topic prefix and compact Wi-Fi MAC that the firmware uses (see serial log). MQTT must already be configured in Home Assistant.",
+        "data": {
+          "topic_prefix": "MQTT topic prefix",
+          "mac_address": "Device MAC (12 hex characters)",
+          "friendly_name": "Device title (optional)"
+        }
+      }
+    },
+    "error": {
+      "bad_mac": "MAC must resolve to exactly 12 hexadecimal characters.",
+      "mqtt_not_connected": "MQTT is not connected. Configure the MQTT integration first."
+    }
+  }
+}
