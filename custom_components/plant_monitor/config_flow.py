@@ -9,20 +9,18 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
+from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
     CONF_MAC_ADDRESS,
     CONF_TOPIC_PREFIX,
-    CONF_OPT_MOISTURE_ZONES,
     CONF_OPT_NOTIFY_DRY_PERSISTENT,
     CONF_OPT_CHANNEL_NAMES,
     DEFAULT_DRY_THRESHOLD,
     DEFAULT_TOPIC_PREFIX,
     DOMAIN,
-    coerce_moisture_zones,
-    default_moisture_zones,
     dispatcher_signal_update,
     normalize_mac,
 )
@@ -34,16 +32,8 @@ def _mqtt_ready(hass) -> bool:
     return mqtt.is_connected(hass)
 
 
-def _effective_moisture_zones(opts: dict[str, Any]) -> list[dict[str, Any]]:
-    """Resolved moisture_zones list with defaults."""
-
-    zones = coerce_moisture_zones(opts.get(CONF_OPT_MOISTURE_ZONES))
-
-    return zones if zones is not None else default_moisture_zones()
-
-
 class PlantMonitorOptionsFlow(OptionsFlow):
-    """Configure global moisture zone labels/ranges and dry notify behavior."""
+    """Configure optional dry-alarm notifications."""
 
     def __init__(self, entry: ConfigEntry) -> None:
         """Pass the config entry owning these options."""
@@ -51,74 +41,37 @@ class PlantMonitorOptionsFlow(OptionsFlow):
         self._entry = entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Show or submit the zones + notification checkbox."""
-
-        errs: dict[str, str] = {}
-
-        zones = _effective_moisture_zones(dict(self._entry.options or {}))
+        """Show or submit the notification checkbox."""
 
         if user_input is not None:
-            built: list[dict[str, Any]] = []
+            merged = {
+                **dict(self._entry.options or {}),
+                CONF_OPT_NOTIFY_DRY_PERSISTENT: bool(
+                    user_input.get(CONF_OPT_NOTIFY_DRY_PERSISTENT, False),
+                ),
+            }
 
-            for i in range(len(zones)):
-                built.append(
-                    {
-                        "min": float(user_input[f"zone_{i}_min"]),
-                        "max": float(user_input[f"zone_{i}_max"]),
-                        "label": str(user_input[f"zone_{i}_label"]).strip(),
-                        "color_hint": str(user_input.get(f"zone_{i}_color", "") or "").strip(),
-                    },
-                )
+            self.hass.config_entries.async_update_entry(
+                self._entry,
+                options=merged,
+            )
+            async_dispatcher_send(
+                self.hass,
+                dispatcher_signal_update(self._entry.entry_id),
+            )
 
-            coerced = coerce_moisture_zones(built)
+            return self.async_create_entry(title="", data={})
 
-            if coerced is None:
-                errs["base"] = "invalid_zones"
-            else:
-
-                merged = {
-                    **dict(self._entry.options or {}),
-
-                    CONF_OPT_MOISTURE_ZONES: coerced,
-
-                    CONF_OPT_NOTIFY_DRY_PERSISTENT: bool(
-                        user_input.get(CONF_OPT_NOTIFY_DRY_PERSISTENT, False),
-                    ),
-                }
-
-                self.hass.config_entries.async_update_entry(
-                    self._entry,
-                    options=merged,
-                )
-                async_dispatcher_send(
-                    self.hass,
-                    dispatcher_signal_update(self._entry.entry_id),
-                )
-
-                return self.async_create_entry(title="", data={})
-
-        schema_kv: dict[Any, Any] = {
-            vol.Required(
-                CONF_OPT_NOTIFY_DRY_PERSISTENT,
-                default=bool((self._entry.options or {}).get(CONF_OPT_NOTIFY_DRY_PERSISTENT, False)),
-            ): cv.boolean,
-        }
-
-        for i, z in enumerate(zones):
-            schema_kv[vol.Required(f"zone_{i}_min", default=z["min"])] = vol.Coerce(float)
-
-            schema_kv[vol.Required(f"zone_{i}_max", default=z["max"])] = vol.Coerce(float)
-
-            schema_kv[vol.Required(f"zone_{i}_label", default=z["label"])] = str
-
-            schema_kv[vol.Optional(f"zone_{i}_color", default=z.get("color_hint", ""))] = str
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(schema_kv),
-
-            errors=errs,
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_OPT_NOTIFY_DRY_PERSISTENT,
+                    default=bool((self._entry.options or {}).get(CONF_OPT_NOTIFY_DRY_PERSISTENT, False)),
+                ): cv.boolean,
+            },
         )
+
+        return self.async_show_form(step_id="init", data_schema=schema)
 
 
 class PlantMonitorFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
@@ -128,7 +81,6 @@ class PlantMonitorFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-
         """Options flow hook for integrations UI."""
 
         return PlantMonitorOptionsFlow(config_entry)
@@ -144,7 +96,6 @@ class PlantMonitorFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             mac_compact = normalize_mac(user_input[CONF_MAC_ADDRESS])
 
             if len(mac_compact) != 12:
-
                 errors["base"] = "bad_mac"
 
             elif not mac_compact.isalnum():
@@ -158,16 +109,12 @@ class PlantMonitorFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured(
                     updates={
                         CONF_TOPIC_PREFIX: prefix,
-
                         CONF_MAC_ADDRESS: mac_compact,
                     },
-
                 )
 
                 data = {
-
                     CONF_TOPIC_PREFIX: prefix,
-
                     CONF_MAC_ADDRESS: mac_compact,
                 }
 
@@ -181,7 +128,6 @@ class PlantMonitorFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
                 options = {
                     "thresholds": {str(i): DEFAULT_DRY_THRESHOLD for i in range(6)},
-                    CONF_OPT_MOISTURE_ZONES: default_moisture_zones(),
                     CONF_OPT_NOTIFY_DRY_PERSISTENT: False,
                     CONF_OPT_CHANNEL_NAMES: {},
                 }
@@ -193,7 +139,7 @@ class PlantMonitorFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_TOPIC_PREFIX, default=DEFAULT_TOPIC_PREFIX): str,
                 vol.Required(CONF_MAC_ADDRESS): str,
                 vol.Optional("friendly_name"): str,
-            }
+            },
         )
 
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)

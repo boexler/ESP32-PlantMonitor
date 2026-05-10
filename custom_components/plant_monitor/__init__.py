@@ -19,8 +19,8 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
+    ADC_RAW_MAX,
     CONF_MAC_ADDRESS,
-    CONF_OPT_MOISTURE_ZONES,
     CONF_OPT_NOTIFY_DRY_PERSISTENT,
     CONF_TOPIC_PREFIX,
     DEFAULT_DRY_THRESHOLD,
@@ -29,10 +29,7 @@ from .const import (
     PLATFORMS,
     PROBE_NO_SENSOR,
     PROBE_OK,
-    coerce_moisture_zones,
-    default_moisture_zones,
     dispatcher_signal_update,
-    resolve_moisture_zone,
 )
 from .helpers import channel_custom_label, ensure_plant_monitor_options
 
@@ -157,17 +154,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             return
 
-        if not math.isfinite(val) or val < 0.0:
-
+        if (
+            not math.isfinite(val)
+            or val < 0.0
+            or val > ADC_RAW_MAX
+        ):
             runtime.moisture.pop(ch, None)
 
             runtime.probe_status[ch] = PROBE_NO_SENSOR
-
-        elif val > 100.0:
-
-            runtime.moisture[ch] = 100.0
-
-            runtime.probe_status[ch] = PROBE_OK
 
         else:
 
@@ -272,13 +266,7 @@ async def _async_broadcast_soil_low(runtime: PlantRuntime, event: Event) -> None
 
         return
 
-    pct = float(mo)
-
-    zones = coerce_moisture_zones(opts.get(CONF_OPT_MOISTURE_ZONES)) or default_moisture_zones()
-
-    _idx, zrow = resolve_moisture_zone(pct, zones)
-
-    zone_label = str(zrow["label"])
+    raw_val = float(mo)
 
     placement = channel_custom_label(opts, ch)
 
@@ -290,9 +278,8 @@ async def _async_broadcast_soil_low(runtime: PlantRuntime, event: Event) -> None
         "channel_ui": ch + 1,
 
         "entity_id": entity_id,
-        "moisture_percent": pct,
-        "dry_threshold_percent": thresh,
-        "zone_label": zone_label,
+        "moisture_raw": raw_val,
+        "dry_threshold_raw": thresh,
         "placement_name": placement,
     }
 
@@ -306,7 +293,7 @@ async def _async_broadcast_soil_low(runtime: PlantRuntime, event: Event) -> None
     title = "Plant monitor — dry soil alarm"
 
     message = (
-        f"{cap}: soil moisture is {pct:.1f}% (threshold {thresh:.1f}%; zone '{zone_label}')."
+        f"{cap}: soil raw ADC {raw_val:.0f} (dry threshold {thresh:.0f})."
     )
 
     nid = f"plant_monitor_low_{runtime.mac}_{ch}"

@@ -150,39 +150,24 @@ static void mac_to_compact_id(const uint8_t mac[6], char out_compact[13])
 }
 
 /**
- * @brief Warn once at boot if soil ADC reference ordering is inconsistent (disconnect < water < moist < dry < air <
- *        spike).
+ * @brief Warn once at boot if soil ADC disconnect/spike bounds do not form a valid raw window.
  */
-static void warn_if_soil_calib_order_invalid(void)
+static void warn_if_soil_adc_bounds_invalid(void)
 {
-    int dc = CONFIG_PM_SOIL_ADC_DISCONNECT_MAX;
-    int w = CONFIG_PM_SOIL_ADC_WATER;
-    int moist = CONFIG_PM_SOIL_ADC_ILEX_VERY_WET;
-    int dryp = CONFIG_PM_SOIL_ADC_VERY_DRY;
-    int a = CONFIG_PM_SOIL_ADC_AIR;
-    int sp = CONFIG_PM_SOIL_ADC_SPIKE_MIN;
-    if (!(dc < w && w < moist && moist < dryp && dryp < a && a < sp)) {
+    int lo = CONFIG_PM_SOIL_ADC_DISCONNECT_MAX;
+    int hi = CONFIG_PM_SOIL_ADC_SPIKE_MIN;
+    if (lo >= hi) {
         ESP_LOGW(TAG,
-                 "Soil ADC Kconfig ordering should be: disconnect < water < moist_plant < dry_plant < air < spike "
-                 "(got %d, %d, %d, %d, %d, %d)",
-                 dc,
-                 w,
-                 moist,
-                 dryp,
-                 a,
-                 sp);
-    }
-    if (w >= a) {
-        ESP_LOGW(TAG, "Soil ADC: water reference must be less than air reference (got water=%d air=%d)", w, a);
+                 "Soil ADC: disconnect max must be less than spike min (got disconnect_max=%d spike_min=%d)",
+                 lo,
+                 hi);
     }
 }
 
 /**
- * @brief Map averaged raw ADC to moisture 0–100%, or -1 if no sensor (disconnected or spike).
- *
- * Uses water and air references from sdkconfig; clamps to [0, 100] when connected.
+ * @brief Valid averaged raw ADC for MQTT, or -1 if no sensor (disconnected or spike).
  */
-static float raw_to_moisture_pct(int raw)
+static float raw_to_published_value(int raw)
 {
     if (raw < CONFIG_PM_SOIL_ADC_DISCONNECT_MAX) {
         return -1.f;
@@ -190,19 +175,7 @@ static float raw_to_moisture_pct(int raw)
     if (raw > CONFIG_PM_SOIL_ADC_SPIKE_MIN) {
         return -1.f;
     }
-    const int air = CONFIG_PM_SOIL_ADC_AIR;
-    const int water = CONFIG_PM_SOIL_ADC_WATER;
-    const int span = air - water;
-    if (span <= 0) {
-        return -1.f;
-    }
-    float pct = 100.f * (float)(air - raw) / (float)span;
-    if (pct < 0.f) {
-        pct = 0.f;
-    } else if (pct > 100.f) {
-        pct = 100.f;
-    }
-    return pct;
+    return (float)raw;
 }
 
 /**
@@ -222,7 +195,7 @@ static esp_err_t __attribute__((unused)) measure_channels(pm_station_config_t *c
     }
 
     for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
-        moisture_out[i] = raw_to_moisture_pct(raw[i]);
+        moisture_out[i] = raw_to_published_value(raw[i]);
         if (moisture_out[i] < 0.f) {
             if (raw[i] > CONFIG_PM_SOIL_ADC_SPIKE_MIN) {
                 ESP_LOGW(TAG, "CH%d: no sensor / spike (raw=%d)", i, raw[i]);
@@ -230,7 +203,7 @@ static esp_err_t __attribute__((unused)) measure_channels(pm_station_config_t *c
                 ESP_LOGW(TAG, "CH%d: no sensor / disconnected (raw=%d)", i, raw[i]);
             }
         } else {
-            ESP_LOGI(TAG, "CH%d raw=%d moisture=%.1f%%", i, raw[i], (double)moisture_out[i]);
+            ESP_LOGI(TAG, "CH%d raw=%d (valid)", i, raw[i]);
         }
     }
     return ESP_OK;
@@ -249,7 +222,7 @@ static void fill_mqtt_disc(pm_mqtt_discovery_input_t *disc, pm_station_config_t 
 
 /**
  * @brief Wait CONFIG_PM_POST_WIFI_SENSOR_WARMUP_SEC, then CONFIG_PM_POST_WIFI_TRIPLE_COUNT consecutive
- *        pm_adc_read_averaged bursts; mean raw per channel → moisture like measure_channels.
+ *        pm_adc_read_averaged bursts; mean raw per channel → published value like measure_channels.
  *
  * Reduces post-wake transients via settling delay plus several averaged bursts before MQTT.
  */
@@ -293,7 +266,7 @@ static esp_err_t measure_channels_after_warmup_triple(pm_station_config_t *cfg,
 
     for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
         const int raw = raw_mean[i];
-        moisture_out[i] = raw_to_moisture_pct(raw);
+        moisture_out[i] = raw_to_published_value(raw);
         if (moisture_out[i] < 0.f) {
             if (raw > CONFIG_PM_SOIL_ADC_SPIKE_MIN) {
                 ESP_LOGW(TAG, "CH%d: no sensor / spike (mean raw=%d)", i, raw);
@@ -301,7 +274,7 @@ static esp_err_t measure_channels_after_warmup_triple(pm_station_config_t *cfg,
                 ESP_LOGW(TAG, "CH%d: no sensor / disconnected (mean raw=%d)", i, raw);
             }
         } else {
-            ESP_LOGI(TAG, "CH%d mean raw=%d moisture=%.1f%%", i, raw, (double)moisture_out[i]);
+            ESP_LOGI(TAG, "CH%d mean raw=%d (valid)", i, raw);
         }
     }
 
@@ -363,7 +336,7 @@ void app_main(void)
     mac_to_compact_id(mac, compact);
     ESP_LOGI(TAG, "WiFi STA MAC compact id %s", compact);
 
-    warn_if_soil_calib_order_invalid();
+    warn_if_soil_adc_bounds_invalid();
 
     ESP_ERROR_CHECK(pm_adc_init());
 

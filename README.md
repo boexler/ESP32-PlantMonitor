@@ -1,11 +1,11 @@
 # ESP32-C6 Plant Monitor
 
-ESP-IDF firmware for Seeed Studio **XIAO ESP32-C6** plus a **Home Assistant MQTT companion** integration: six soil-moisture ADC channels, MQTT discovery metadata, host-driven per-channel masking, and configurable dry thresholds and alarms stored in Home Assistant (not direct database writes).
+ESP-IDF firmware for Seeed Studio **XIAO ESP32-C6** plus a **Home Assistant MQTT companion** integration: six soil ADC channels publishing **raw readings** over MQTT, discovery metadata, host-driven per-channel masking, and per-channel **raw dry thresholds** with `binary_sensor` alarms (all stored in Home Assistant, not direct database writes).
 
 | Path | Purpose |
 |------|---------|
 | [`firmware/`](firmware/) | ESP-IDF **5.x / 6.x**, target `esp32c6`; Wi-Fi, NTP, HTTP JSON config, MQTT + Home Assistant discovery. |
-| [`custom_components/plant_monitor/`](custom_components/plant_monitor/) | Six `number` thresholds + six `binary_sensor` dry alarms linked to MQTT telemetry. |
+| [`custom_components/plant_monitor/`](custom_components/plant_monitor/) | Six raw-ADC `number` thresholds + six `binary_sensor` dry alarms linked to MQTT telemetry. |
 | [`docs/hardware_xiao_esp32c6.md`](docs/hardware_xiao_esp32c6.md) | MCU ↔ pin mapping for the six analog inputs. |
 | [`docs/homeassistant.md`](docs/homeassistant.md) | MQTT topic contract, `www/` JSON example, integration steps. |
 

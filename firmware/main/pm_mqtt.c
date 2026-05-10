@@ -92,7 +92,7 @@ static esp_err_t publish_state(esp_mqtt_client_handle_t c, const char *topic, co
 }
 
 /**
- * @brief Home Assistant MQTT discovery payload for one moisture sensor.
+ * @brief Home Assistant MQTT discovery payload for one soil ADC channel (raw reading; -1 = no probe).
  */
 static esp_err_t build_discovery_json(char *out,
                                       size_t out_len,
@@ -113,13 +113,13 @@ static esp_err_t build_discovery_json(char *out,
     char uniq[144];
     snprintf(uniq,
              sizeof(uniq),
-             "%s_%s_moisture_%d",
+             "%s_%s_soil_raw_%d",
              CONFIG_PM_MQTT_TOPIC_PREFIX,
              mac,
              ch_index);
 
     char human[64];
-    snprintf(human, sizeof(human), "Moisture %d", ch_index + 1);
+    snprintf(human, sizeof(human), "Soil raw %d", ch_index + 1);
 
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
@@ -129,7 +129,6 @@ static esp_err_t build_discovery_json(char *out,
     cJSON_AddStringToObject(root, "name", human);
     cJSON_AddStringToObject(root, "unique_id", uniq);
     cJSON_AddStringToObject(root, "state_topic", topic_path);
-    cJSON_AddStringToObject(root, "unit_of_measurement", "%");
     cJSON_AddStringToObject(root, "state_class", "measurement");
 
     cJSON_AddStringToObject(root, "availability_topic", av_topic);
@@ -317,7 +316,7 @@ static esp_err_t publish_bootstrap(esp_mqtt_client_handle_t client,
 }
 
 /**
- * @brief Publish non-retained moisture values for active channels only.
+ * @brief Publish non-retained raw ADC values (-1 when invalid) for active channels only.
  */
 static esp_err_t publish_moisture_states(esp_mqtt_client_handle_t client,
                                          const char *mac_topic_id,
@@ -336,7 +335,11 @@ static esp_err_t publish_moisture_states(esp_mqtt_client_handle_t client,
             continue;
         }
         snprintf(topic, sizeof(topic), "%s/moisture/ch%d", base, ch);
-        snprintf(val, sizeof(val), "%.1f", (double)moisture_pct[ch]);
+        if (moisture_pct[ch] < 0.f) {
+            snprintf(val, sizeof(val), "-1");
+        } else {
+            snprintf(val, sizeof(val), "%.0f", (double)moisture_pct[ch]);
+        }
         err = publish_state(client, topic, val);
         if (err != ESP_OK) {
             return err;

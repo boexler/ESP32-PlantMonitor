@@ -16,12 +16,8 @@ CONFIG_PM_POST_WIFI_TRIPLE_COUNT=3
 # Default: external U.FL antenna (XIAO ESP32-C6 RF switch)
 CONFIG_PM_WIFI_ANT_EXTERNAL=y
 
-# Soil moisture: raw ADC calibration (see Kconfig help for meanings)
+# Soil: valid raw window [DISCONNECT_MAX, SPIKE_MIN]; outside → MQTT publishes -1
 CONFIG_PM_SOIL_ADC_DISCONNECT_MAX=1300
-CONFIG_PM_SOIL_ADC_WATER=2000
-CONFIG_PM_SOIL_ADC_ILEX_VERY_WET=2300
-CONFIG_PM_SOIL_ADC_VERY_DRY=2500
-CONFIG_PM_SOIL_ADC_AIR=2600
 CONFIG_PM_SOIL_ADC_SPIKE_MIN=3000
 
 # HTTPS device registry URLs (ESP_CONFIG_URL): mbedTLS requires a verification method

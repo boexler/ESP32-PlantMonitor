@@ -4,13 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from .const import (
-    CONF_OPT_CHANNEL_NAMES,
-    CONF_OPT_MOISTURE_ZONES,
-    CONF_OPT_NOTIFY_DRY_PERSISTENT,
-    coerce_moisture_zones,
-    default_moisture_zones,
-)
+from .const import CONF_OPT_CHANNEL_NAMES, CONF_OPT_NOTIFY_DRY_PERSISTENT
 
 
 def coerce_channel_names(raw: Any) -> dict[str, str]:
@@ -35,12 +29,6 @@ def ensure_plant_monitor_options(options: Mapping[str, Any]) -> tuple[dict[str, 
     opts = dict(options)
 
     changed = False
-
-    if coerce_moisture_zones(opts.get(CONF_OPT_MOISTURE_ZONES)) is None:
-
-        opts[CONF_OPT_MOISTURE_ZONES] = default_moisture_zones()
-
-        changed = True
 
     if CONF_OPT_NOTIFY_DRY_PERSISTENT not in opts:
 

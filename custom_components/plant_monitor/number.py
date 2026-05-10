@@ -27,14 +27,13 @@ async def async_setup_entry(
 
 
 class PlantDryThreshold(NumberEntity):
-    """Moisture alarm threshold (numeric, %)."""
+    """Dry-soil alarm threshold as raw ADC (problem when reading is above this)."""
 
     _attr_has_entity_name = True
     _attr_native_min_value = 0
-    _attr_native_max_value = 100
-    _attr_native_step = 0.5
+    _attr_native_max_value = 4095
+    _attr_native_step = 1
     _attr_mode = NumberMode.BOX
-    _attr_native_unit_of_measurement = "%"
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, runtime: Any, channel: int) -> None:

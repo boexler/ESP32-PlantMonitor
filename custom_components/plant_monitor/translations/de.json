@@ -19,35 +19,12 @@
   "options": {
     "step": {
       "init": {
-        "title": "Feuchte-Zonen",
-        "description": "Globale 0–100%-Bände für alle Kanäle. Optional zusätzliche dauerhafte Home-Assistant-Benachrichtigung, wenn ein Kanal seinen Trocken-Schwellenwert unterschreitet.",
+        "title": "Benachrichtigungen",
+        "description": "Optional eine dauerhafte Home-Assistant-Benachrichtigung, wenn der Trocken-Alarm eines Kanals einschaltet (Roh-ADC liegt über dem eingestellten Schwellwert).",
         "data": {
-          "notify_dry_persistent": "Dauerhafte Benachrichtigung bei Trocken-Alarm",
-          "zone_0_min": "Stufe 1 Min %",
-          "zone_0_max": "Stufe 1 Max %",
-          "zone_0_label": "Stufe 1 Text",
-          "zone_0_color": "Stufe 1 Farbhinweis",
-          "zone_1_min": "Stufe 2 Min %",
-          "zone_1_max": "Stufe 2 Max %",
-          "zone_1_label": "Stufe 2 Text",
-          "zone_1_color": "Stufe 2 Farbhinweis",
-          "zone_2_min": "Stufe 3 Min %",
-          "zone_2_max": "Stufe 3 Max %",
-          "zone_2_label": "Stufe 3 Text",
-          "zone_2_color": "Stufe 3 Farbhinweis",
-          "zone_3_min": "Stufe 4 Min %",
-          "zone_3_max": "Stufe 4 Max %",
-          "zone_3_label": "Stufe 4 Text",
-          "zone_3_color": "Stufe 4 Farbhinweis",
-          "zone_4_min": "Stufe 5 Min %",
-          "zone_4_max": "Stufe 5 Max %",
-          "zone_4_label": "Stufe 5 Text",
-          "zone_4_color": "Stufe 5 Farbhinweis"
+          "notify_dry_persistent": "Dauerhafte Benachrichtigung bei Trocken-Alarm"
         }
       }
-    },
-    "error": {
-      "invalid_zones": "Ungültige Zonen: min < max, steigende Reihenfolge, alle Textfelder müssen gefüllt sein."
     }
   },
   "entity": {

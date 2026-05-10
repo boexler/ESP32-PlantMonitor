@@ -1,4 +1,4 @@
-"""Binary sensors: dry soil when moisture % falls below configured threshold."""
+"""Binary sensors: dry soil when raw ADC is above configured threshold."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ async def async_setup_entry(
 
 
 class PlantDryAlarm(BinarySensorEntity):
-    """On when the live moisture reading is below the dry threshold."""
+    """On when the live raw ADC reading exceeds the configured dry threshold."""
 
     _attr_has_entity_name = True
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
@@ -58,7 +58,7 @@ class PlantDryAlarm(BinarySensorEntity):
         opts = dict(self._entry.options or {})
         thresholds = opts.get("thresholds", {})
         th = float(thresholds.get(str(self._channel), DEFAULT_DRY_THRESHOLD))
-        return mo < th
+        return mo > th
 
     @property
     def device_info(self) -> DeviceInfo:
