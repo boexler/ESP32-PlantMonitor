@@ -22,22 +22,23 @@ menu "Plant Monitor (ESP32-C6)"
         help
             Time spent in deep sleep after each measurement cycle before the next wake.
 
-    config PM_POST_WIFI_MEASURE_WINDOW_SEC
-        int "Deep sleep: ADC averaging window before MQTT (seconds)"
+    config PM_POST_WIFI_SENSOR_WARMUP_SEC
+        int "Deep sleep: sensor warm-up delay before MQTT (seconds)"
         depends on PM_POWER_DEEP_SLEEP
         default 20
         range 0 3600
         help
-            After Wi-Fi is up and ADC is initialized, average readings over this many seconds before MQTT publish.
+            After Wi-Fi is up and ADC is initialized, wait this long before sampling (sensor / analog settling).
+            After the delay, several consecutive pm_adc_read_averaged bursts are taken and averaged per channel.
             0 = legacy behaviour (single immediate measurement burst).
 
-    config PM_POST_WIFI_MEASURE_SAMPLE_PERIOD_MS
-        int "Deep sleep: delay between averaged batches in measurement window (ms)"
+    config PM_POST_WIFI_TRIPLE_COUNT
+        int "Deep sleep: consecutive averaged ADC bursts after warm-up"
         depends on PM_POWER_DEEP_SLEEP
-        default 500
-        range 50 10000
+        default 3
+        range 1 16
         help
-            Interval between pm_adc_read_averaged batches while filling the pre-MQTT measurement window.
+            Number of back-to-back pm_adc_read_averaged calls after warm-up; per-channel raw values are mean-averaged before MQTT.
 
     config PM_DEBUG_LOOP_PERIOD_MS
         int "Continuous mode delay between cycles (milliseconds)"

@@ -9,9 +9,9 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # Default: deep sleep mode (explicit for fresh clones before menuconfig)
 CONFIG_PM_POWER_DEEP_SLEEP=y
 
-# Deep sleep: average ADC over this window before MQTT (matches Kconfig defaults)
-CONFIG_PM_POST_WIFI_MEASURE_WINDOW_SEC=20
-CONFIG_PM_POST_WIFI_MEASURE_SAMPLE_PERIOD_MS=500
+# Deep sleep: sensor warm-up then averaged bursts before MQTT (matches Kconfig defaults)
+CONFIG_PM_POST_WIFI_SENSOR_WARMUP_SEC=20
+CONFIG_PM_POST_WIFI_TRIPLE_COUNT=3
 
 # Default: external U.FL antenna (XIAO ESP32-C6 RF switch)
 CONFIG_PM_WIFI_ANT_EXTERNAL=y

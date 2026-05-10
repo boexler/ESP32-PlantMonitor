@@ -207,8 +207,11 @@ static float raw_to_moisture_pct(int raw)
 
 /**
  * @brief Sample ADC and fill moisture array; log each channel.
+ *
+ * Unused when deep sleep uses warm-up + multi-burst path only (see sdkconfig).
  */
-static esp_err_t measure_channels(pm_station_config_t *cfg, float moisture_out[PM_MOISTURE_CHANNEL_COUNT])
+static esp_err_t __attribute__((unused)) measure_channels(pm_station_config_t *cfg,
+                                                          float moisture_out[PM_MOISTURE_CHANNEL_COUNT])
 {
     (void)cfg;
     int raw[PM_MOISTURE_CHANNEL_COUNT];
@@ -245,29 +248,32 @@ static void fill_mqtt_disc(pm_mqtt_discovery_input_t *disc, pm_station_config_t 
 #define PM_MQTT_ONESHOT_RETRY_MAX 3
 
 /**
- * @brief Repeated ADC batches over CONFIG_PM_POST_WIFI_MEASURE_WINDOW_SEC; mean raw → moisture like measure_channels.
+ * @brief Wait CONFIG_PM_POST_WIFI_SENSOR_WARMUP_SEC, then CONFIG_PM_POST_WIFI_TRIPLE_COUNT consecutive
+ *        pm_adc_read_averaged bursts; mean raw per channel → moisture like measure_channels.
  *
- * Reduces post-wake transients by averaging many short bursts before MQTT.
+ * Reduces post-wake transients via settling delay plus several averaged bursts before MQTT.
  */
-static esp_err_t measure_channels_over_window(pm_station_config_t *cfg,
-                                              float moisture_out[PM_MOISTURE_CHANNEL_COUNT])
+static esp_err_t measure_channels_after_warmup_triple(pm_station_config_t *cfg,
+                                                      float moisture_out[PM_MOISTURE_CHANNEL_COUNT])
 {
     (void)cfg;
     int raw_scratch[PM_MOISTURE_CHANNEL_COUNT];
     int64_t sum[PM_MOISTURE_CHANNEL_COUNT] = {0};
-    uint32_t batches = 0;
 
-    const uint32_t window_ms = (uint32_t)CONFIG_PM_POST_WIFI_MEASURE_WINDOW_SEC * 1000u;
-    uint32_t period_ms = (uint32_t)CONFIG_PM_POST_WIFI_MEASURE_SAMPLE_PERIOD_MS;
+    const uint32_t warmup_sec = (uint32_t)CONFIG_PM_POST_WIFI_SENSOR_WARMUP_SEC;
+    const uint32_t burst_count = (uint32_t)CONFIG_PM_POST_WIFI_TRIPLE_COUNT;
 
     ESP_LOGI(TAG,
-             "Measurement window %" PRIu32 " s (batch every %" PRIu32 " ms)",
-             (uint32_t)CONFIG_PM_POST_WIFI_MEASURE_WINDOW_SEC,
-             period_ms);
+             "Sensor warm-up %" PRIu32 " s, then %" PRIu32 " averaged burst(s)",
+             warmup_sec,
+             burst_count);
 
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(window_ms);
+    const uint32_t warmup_ms = warmup_sec * 1000u;
+    if (warmup_ms > 0u) {
+        vTaskDelay(pdMS_TO_TICKS(warmup_ms));
+    }
 
-    while (xTaskGetTickCount() < deadline) {
+    for (uint32_t n = 0; n < burst_count; n++) {
         esp_err_t err = pm_adc_read_averaged(CONFIG_PM_ADC_SAMPLE_COUNT, raw_scratch);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "pm_adc_read_averaged failed: %s", esp_err_to_name(err));
@@ -276,25 +282,14 @@ static esp_err_t measure_channels_over_window(pm_station_config_t *cfg,
         for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
             sum[i] += (int64_t)raw_scratch[i];
         }
-        batches++;
-
-        if (xTaskGetTickCount() >= deadline) {
-            break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(period_ms));
-    }
-
-    if (batches == 0) {
-        ESP_LOGE(TAG, "measure_channels_over_window: no batches");
-        return ESP_ERR_INVALID_STATE;
     }
 
     int raw_mean[PM_MOISTURE_CHANNEL_COUNT];
     for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
-        raw_mean[i] = (int)(sum[i] / (int64_t)batches);
+        raw_mean[i] = (int)(sum[i] / (int64_t)burst_count);
     }
 
-    ESP_LOGI(TAG, "Measurement window done (%" PRIu32 " batches)", batches);
+    ESP_LOGI(TAG, "Warm-up measurement done (%" PRIu32 " burst(s))", burst_count);
 
     for (int i = 0; i < PM_MOISTURE_CHANNEL_COUNT; i++) {
         const int raw = raw_mean[i];
@@ -320,8 +315,8 @@ static esp_err_t measure_and_mqtt_publish_oneshot(const char *compact, pm_statio
 {
     float moisture[PM_MOISTURE_CHANNEL_COUNT];
     esp_err_t me;
-#if CONFIG_PM_POST_WIFI_MEASURE_WINDOW_SEC > 0
-    me = measure_channels_over_window(cfg, moisture);
+#if CONFIG_PM_POST_WIFI_SENSOR_WARMUP_SEC > 0
+    me = measure_channels_after_warmup_triple(cfg, moisture);
 #else
     me = measure_channels(cfg, moisture);
 #endif
