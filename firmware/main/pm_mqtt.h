@@ -21,7 +21,8 @@ typedef struct {
 } pm_mqtt_discovery_input_t;
 
 /**
- * @brief Opens a transport connection, publishes discovery + meta + moisture, then disconnects.
+ * @brief Opens a transport connection, publishes discovery + meta + moisture at QoS 1, waits for broker
+ *        PUBACKs, then disconnects.
  *
  * Intended for deep-sleep wake cycles: minimal broker footprint between sleeps.
  *
@@ -43,7 +44,8 @@ esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
 esp_err_t pm_mqtt_session_start(const char *mac_topic_id, const pm_mqtt_discovery_input_t *disc);
 
 /**
- * @brief Publishes moisture state topics over an existing session. Reconnects and re-bootstraps if disconnected.
+ * @brief Publishes moisture state topics over an existing session at QoS 1; waits for broker PUBACKs.
+ *        Reconnects and re-bootstraps if disconnected.
  *
  * @param disc Channel mask and device name (must remain valid for the call).
  * @param moisture_pct Per channel: raw ADC or -1 when no sensor; values for inactive channels are unused.

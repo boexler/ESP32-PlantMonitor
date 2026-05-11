@@ -19,12 +19,19 @@ static const char TAG[] = "pm_mqtt";
 
 #define MQTT_EV_CONNECTED BIT0
 #define MQTT_EV_FAILED BIT1
+#define MQTT_EV_QOS1_DONE BIT2
+
+/** QoS 1 publish/ack completion wait (deep sleep + session bootstrap/moisture). */
+#define MQTT_QOS1_ACK_TIMEOUT_CYCLE_MS    25000
+#define MQTT_QOS1_ACK_TIMEOUT_SESSION_MS 15000
 
 /** Context shared by the MQTT event handler and connection wait logic. */
 typedef struct {
     EventGroupHandle_t eg;
     esp_mqtt_client_handle_t client;
     volatile bool broker_connected;
+    volatile bool qos1_track;
+    volatile int qos1_acks_remain;
 } mqtt_wait_t;
 
 #ifndef PM_FW_VERSION
@@ -45,7 +52,6 @@ static void mqtt_event_handler(void *handler_args,
 {
     mqtt_wait_t *ctx = (mqtt_wait_t *)handler_args;
     (void)base;
-    (void)event_data;
 
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
@@ -61,6 +67,16 @@ static void mqtt_event_handler(void *handler_args,
         ESP_LOGE(TAG, "MQTT error");
         ctx->broker_connected = false;
         xEventGroupSetBits(ctx->eg, MQTT_EV_FAILED);
+        break;
+    case MQTT_EVENT_PUBLISHED:
+        /* Outgoing QoS 1+: client received PUBACK (or QoS 2 completion); count down pending publishes. */
+        (void)event_data;
+        if (ctx->qos1_track && ctx->qos1_acks_remain > 0) {
+            ctx->qos1_acks_remain--;
+            if (ctx->qos1_acks_remain == 0) {
+                xEventGroupSetBits(ctx->eg, MQTT_EV_QOS1_DONE);
+            }
+        }
         break;
     default:
         break;
@@ -85,9 +101,10 @@ static esp_err_t publish_retained(esp_mqtt_client_handle_t c, const char *topic,
     return (mid >= 0) ? ESP_OK : ESP_FAIL;
 }
 
+/** Non-retained channel readings: QoS 1 so the broker ACKs before we disconnect/sleep. */
 static esp_err_t publish_state(esp_mqtt_client_handle_t c, const char *topic, const char *payload)
 {
-    int mid = esp_mqtt_client_publish(c, topic, payload, 0, 0, 0);
+    int mid = esp_mqtt_client_publish(c, topic, payload, 0, 1, 0);
     return (mid >= 0) ? ESP_OK : ESP_FAIL;
 }
 
@@ -180,6 +197,59 @@ static esp_err_t wait_for_mqtt_connected(mqtt_wait_t *w, uint32_t timeout_ms)
         ESP_LOGE(TAG, "MQTT connect timeout or failure");
         return ESP_ERR_TIMEOUT;
     }
+    return ESP_OK;
+}
+
+/** QoS 1 retained bootstrap + HA discovery publishes (must match publish_bootstrap). */
+static int count_qos1_bootstrap_publishes(const pm_mqtt_discovery_input_t *disc)
+{
+    int n = 3;
+    for (int ch = 0; ch < PM_MOISTURE_CHANNEL_COUNT; ch++) {
+        if (disc->channel_active[ch]) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/** QoS 1 moisture state publishes (must match publish_moisture_states). */
+static int count_qos1_moisture_publishes(const pm_mqtt_discovery_input_t *disc)
+{
+    int n = 0;
+    for (int ch = 0; ch < PM_MOISTURE_CHANNEL_COUNT; ch++) {
+        if (disc->channel_active[ch]) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/**
+ * @brief After queuing QoS 1 publishes, wait until MQTT_EVENT_PUBLISHED has fired once per message.
+ *
+ * Caller sets ctx::qos1_track and ctx::qos1_acks_remain to the publish count before publishing.
+ */
+static esp_err_t wait_for_qos1_acks(mqtt_wait_t *w, uint32_t timeout_ms)
+{
+    if (!w->qos1_track) {
+        return ESP_OK;
+    }
+    if (w->qos1_acks_remain <= 0) {
+        w->qos1_track = false;
+        return ESP_OK;
+    }
+
+    EventBits_t bits =
+        xEventGroupWaitBits(w->eg, MQTT_EV_QOS1_DONE, pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
+    if ((bits & MQTT_EV_QOS1_DONE) == 0 || w->qos1_acks_remain != 0) {
+        ESP_LOGW(TAG,
+                 "QoS1 broker ack timeout or incomplete (%d message id(s) still expected)",
+                 (int)w->qos1_acks_remain);
+        w->qos1_track = false;
+        return ESP_ERR_TIMEOUT;
+    }
+
+    w->qos1_track = false;
     return ESP_OK;
 }
 
@@ -316,7 +386,7 @@ static esp_err_t publish_bootstrap(esp_mqtt_client_handle_t client,
 }
 
 /**
- * @brief Publish non-retained raw ADC values (-1 when invalid) for active channels only.
+ * @brief Publish non-retained raw ADC values (-1 when invalid) for active channels only (QoS 1).
  */
 static esp_err_t publish_moisture_states(esp_mqtt_client_handle_t client,
                                          const char *mac_topic_id,
@@ -377,7 +447,14 @@ static esp_err_t session_full_reconnect(const pm_mqtt_discovery_input_t *disc)
         session_destroy_transport();
         return e;
     }
-    return publish_bootstrap(s_sess.client, s_mac_topic, disc);
+    s_sess.qos1_track = true;
+    s_sess.qos1_acks_remain = count_qos1_bootstrap_publishes(disc);
+    e = publish_bootstrap(s_sess.client, s_mac_topic, disc);
+    if (e != ESP_OK) {
+        s_sess.qos1_track = false;
+        return e;
+    }
+    return wait_for_qos1_acks(&s_sess, MQTT_QOS1_ACK_TIMEOUT_SESSION_MS);
 }
 
 esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
@@ -407,9 +484,18 @@ esp_err_t pm_mqtt_publish_cycle(const char *mac_topic_id,
         return err;
     }
 
+    const int qos1_total = count_qos1_bootstrap_publishes(disc) + count_qos1_moisture_publishes(disc);
+    wait.qos1_track = true;
+    wait.qos1_acks_remain = qos1_total;
+
     err = publish_bootstrap(wait.client, mac_topic_id, disc);
     if (err == ESP_OK) {
         err = publish_moisture_states(wait.client, mac_topic_id, disc, moisture_pct);
+    }
+    if (err == ESP_OK) {
+        err = wait_for_qos1_acks(&wait, MQTT_QOS1_ACK_TIMEOUT_CYCLE_MS);
+    } else {
+        wait.qos1_track = false;
     }
 
     esp_mqtt_client_stop(wait.client);
@@ -449,7 +535,17 @@ esp_err_t pm_mqtt_session_start(const char *mac_topic_id, const pm_mqtt_discover
         return err;
     }
 
+    s_sess.qos1_track = true;
+    s_sess.qos1_acks_remain = count_qos1_bootstrap_publishes(disc);
     err = publish_bootstrap(s_sess.client, s_mac_topic, disc);
+    if (err != ESP_OK) {
+        s_sess.qos1_track = false;
+        session_destroy_transport();
+        vEventGroupDelete(s_sess.eg);
+        s_sess.eg = NULL;
+        return err;
+    }
+    err = wait_for_qos1_acks(&s_sess, MQTT_QOS1_ACK_TIMEOUT_SESSION_MS);
     if (err != ESP_OK) {
         session_destroy_transport();
         vEventGroupDelete(s_sess.eg);
@@ -476,20 +572,30 @@ esp_err_t pm_mqtt_session_publish_moisture(const pm_mqtt_discovery_input_t *disc
         }
     }
 
+    s_sess.qos1_track = true;
+    s_sess.qos1_acks_remain = count_qos1_moisture_publishes(disc);
     esp_err_t err = publish_moisture_states(s_sess.client, s_mac_topic, disc, moisture_pct);
     if (err != ESP_OK) {
+        s_sess.qos1_track = false;
         ESP_LOGW(TAG, "publish moisture failed, attempting reconnect");
         err = session_full_reconnect(disc);
         if (err != ESP_OK) {
             return err;
         }
+        s_sess.qos1_track = true;
+        s_sess.qos1_acks_remain = count_qos1_moisture_publishes(disc);
         err = publish_moisture_states(s_sess.client, s_mac_topic, disc, moisture_pct);
+        if (err != ESP_OK) {
+            s_sess.qos1_track = false;
+            return err;
+        }
     }
-    return err;
+    return wait_for_qos1_acks(&s_sess, MQTT_QOS1_ACK_TIMEOUT_SESSION_MS);
 }
 
 void pm_mqtt_session_stop(void)
 {
+    s_sess.qos1_track = false;
     session_destroy_transport();
     if (s_sess.eg != NULL) {
         vEventGroupDelete(s_sess.eg);
